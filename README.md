@@ -1,3 +1,9 @@
+# c5proc_testing
+
+This is basically a highly experimental fork of `cproc` to try implementing something between C and C++. See [the C5 spec](./c5lang.md).
+
+# Original Readme
+
 (mirrored on [GitHub][GitHub mirror] and [Codeberg][Codeberg mirror])
 
 [![builds.sr.ht status](https://builds.sr.ht/~mcf/cproc/commits/master.svg)](https://builds.sr.ht/~mcf/cproc/commits/master)

@@ -11,18 +11,35 @@ There are many "modern" C like languages to draw from. To name a few:
 
 C5 occupies a much closer spot to C than any of the above.
 1. No name mangling (unless explicitly opted into)
-2. Seperate TU compilation and build steps.
+2. Separate TU compilation and build steps.
 3. Classic C-like syntax (very high source compatibility, with some limited exceptions).
 
-It is more of a "C dialect" than a seperate language. That being said, some changes will likely need to be made to code being ported (although this can be done programmatically).
+It is more of a "C dialect" than a separate language. That being said, some changes will likely need to be made to code being ported (although this can be done programmatically).
+It is based off of the C23 standard, but adopts some features from C29.
 
 ## Features
+
+### Named Arguments
+
+The first feature is that we permit naming arguments. Named arguments must come after all positional arguments. For example:
+```C5
+int foo(int a, int b, int c, int d);
+
+int main() {
+    foo(1, 2, .d=4, .c=3);
+}
+```
+
+It is an error to give an argument both positionally and by name, or name a parameter twice, or leave a non-implicit parameter unfilled.
+
+The parameter names that are used come from the declaration that is visible at the call site (usually the one in the header). 
+Named arguments cannot be used for parameters that don't have names.
 
 ### Structured Polymorphism based on Typeclasses
 
 We introduce the following keywords for structured polymorphism:
 * `generic`: fully type erased polymorphism, equivalent to a C function using void pointers.
-* `template`: monomorphizes, mangles names. 
+* `template`: monomorphizes. 
 
 The key thing to note is that these are not duck typed. C5 requires passing vtables to both generic and template functions to make use of the generic types.
 This enables type checking to be much simpler than C++.
@@ -51,7 +68,7 @@ typedef struct {
 
 template<type T>
 T add(T a, T b, Add<T> add_vtable) {
-    return add_vtable.add(a, b)
+    return add_vtable.add(a, b);
 }
 ```
 
@@ -63,7 +80,7 @@ We can do:
 ```C5
 generic<type T>
 T* add(T* a, T* b, Add<T*> add_vtable) {
-    return add_vtable.add(a, b)
+    return add_vtable.add(a, b);
 }
 ```
 
@@ -71,31 +88,31 @@ This generates only one body, one that is not name mangled, and can be called fr
 This C code is equivalent:
 ```C
 typedef struct {
-	void* add(void* a, void* b);
-} Add ;
+	void* (*add)(void* a, void* b);
+} Add;
 
 void* add(void* a, void* b, Add add_vtable) {
 	return add_vtable.add(a, b);
 }
 ```
 
-C5 eliminates _Generic, since this mechanism (and a later-discussed one) largely subsumes it.
-
 ### Implicit Arguments
 
 Obviously, passing around many vtables will get noisy. Thus, we need a way to reduce noise associated with them.
-Our solution is implicit arguments. The syntax mimics scala:
+Our solution is implicit arguments. 
 
 ```C5
 template<type T>
-T add(T a, T b)(using Add<T> add_vtable) {
-    return add_vtable.add(a, b)
+T add(T a, T b, implicit Add<T> add_vtable) {
+    return add_vtable.add(a, b);
 }
 ```
 
-Note that hidden parameters are just regular parameters in the ABI. Their main use is simply ergonomics.
+Note that implicit parameters are just regular parameters in the ABI. Their main use is simply ergonomics, in order to reduce noise from repeatedly passing lists of vtables.
+The variadic arguments always come last, and can never be implicit.
+Naming a function without calling it gives a function pointer where the implicit parameters are converted to normal parameters.
 
-It is forbidden to have more than one argument of the same type in the using list.
+The rule is that positional parameters fill only the parameters that are not implicit, in order. Implicit parameters must be either inferred or provided by named arguments.
 
 Then:
 ```C5
@@ -105,12 +122,14 @@ int addInt(int a, int b) {
 }
 
 int main() {
-    Add<int> add_int= { .add = addInt };
+    given Add<int> add_int = { .add = addInt };
+
+    // here, add is the template in the prior code block
     add<int>(1, 2);
 }
 ```
 
-As long as there is one defined value of that type in scope declared with `given`, it will be selected during the function call. 
+As long as there is at least one value of that type in scope declared with `given`, it will be selected during the function call. 
 The most lexically recent will always be selected.
 Implicit function arguments have `given` automatically.
 
@@ -144,7 +163,7 @@ int addIntTrapping(int a, int b) {
 }
 
 int main() {
-    given Add<int> add_int= { .add = addInt };
+    given Add<int> add_int = { .add = addInt };
     given Add<int> add_int_trapping = { .add = addIntTrapping };
     // uses add_int_trapping
     add<int>(1, 2);
@@ -156,19 +175,19 @@ int main() {
         add<int>(1, 2); // used add_int (through given_add)
 
         // can directly specify overrides
-        add<int>(1, 2)(using add_int_trapping); // used add_int_trapping
+        add<int>(1, 2, .add_vtable=add_int_trapping);
     }
 }
 ```
 
-You can also use incomplete types:
+You can also use templated givens:
 ```C5
 template<type T>
-given const Add<T> ADD = { .add = templatedAdd<T> };
+given const Eq<T> BYTE_EQ = { .eq = byte_eq<T> };
 
 int main() {
-   add<int>(1, 2); // uses ADD<int>
-   add<double>(1.0, 2.0); // uses ADD<double>
+   assert_equal<int>(1, 1); // uses BYTE_EQ<int>
+   assert_equal<double>(1.0, 1.0); // uses BYTE_EQ<double>
 }
 ```
 
@@ -180,6 +199,8 @@ given T x;
 add<int>(1, 2); // probably crashes at runtime, but compiles.
 ```
 
+Another footgun is duplicate implicit arguments of the same type. They will end up resolving to the exact same variable.
+
 ### Const Polymorphism
 
 In C, we have const pointers: 
@@ -190,7 +211,7 @@ The const is basically just to document permission, and can easily be casted awa
 However, it has an annoying property that we see in functions like strchr:
 ```c
 // should it accept const char* instead?
-char* strchr(char *in, char c)
+char* strchr(char *in, int c)
 ```
 The constness of the output should depend on the constness of the input. `strchr` does not modify its input, but the user may want to. 
 Thus, returning a const char*  is inappropriate when the input is not const. However, making it a normal char* forbids it from being used with const input.
@@ -205,16 +226,23 @@ This is clearly a pretty suboptimal solution.
 The alternative syntax is:
 ```c5
 generic<constness C>
-C char* strchr(C char* in, char c);
+C char* strchr(C char* in, int c);
 ```
 This has essentially the same behavior, but is better integrated with the polymorphism system declared earlier.
 
 ### The Array and Slice types
 
 C5 has three different kinds of entities that may be indexed with []:
-1. Classical C arrays: declared as `int x[5];`. These undergo decay in parameters, as before. (Can be toggled with pragmas)
-2. Proper array types declared as `array<int, 5> x;`. These are passed and returned by value, like structs.
+1. Classical C arrays: declared as `int x[5];`. These undergo decay in parameters, as before.
+2. Proper array types declared as `array<int, 5> x;`. These can be passed and returned by value, like arrays in structs.
 3. Finally, a slice type written as `slice<int>` Under the hood, it is a two element struct, with a pointer, and a length field.
+
+#### C5 Arrays
+
+C5 arrays also decay to pointers for indexing purposes. The only difference is that they do not undergo parameter adjustment when listed in function parameters or return types. Thus, they can be passed and returned by value.
+Similarly, they are copied by value if doing `x = y`. 
+
+However, they do decay if passed to a function accepting a pointer.
 
 #### Slicing
 The primary purpose of the slice is to enable syntax sugar around dynamic slicing. It is explicitly a view of the data. Thus, passing it by value only passes the underlying array by reference.
@@ -230,7 +258,9 @@ slice<int> x = {0}; // not a slice of [0]! Instead, a null slice (null ptr, 0 le
 
 A slice can be created explicitly via struct construction, or through slicing:
 The specific slicing syntax that we can use (applies to slices, pointers and arrays) is p[n ... m] and p[... m], when we care about a 0 indexed prefix.
-p[n ...]  is also permissible when indexing a slice or array, for a slice to the end.
+Slice length for p[n ... m] is m - n + 1. Thus, p[0 ... len - 1] is safe even when len is 0.
+p[n ...] and p[...] are also permissible when indexing a slice, C5 array, or C array, for a slice to the end.
+Slice ranges are inclusive. This is the same syntax used in c29 case ranges.
 
 The actual way to get a slice of [0] is:
 ```C5
@@ -238,10 +268,37 @@ array<int, 1> y = { 0 };
 slice<int> x = y[...];
 ```
 
+Generally speaking there are no implicit conversions to slices.
+
+### String Literals
+
+C5 supports both C style null terminated strings and Pascal style strings with a separate length. The latter are slices or arrays. 
+
+C5 supports two new prefixes before strings:
+* `p"`: pascal style. No null terminator.
+* `c"`: c style, with a null terminator.
+Both of these can be combined with other prefixes, eg `pL`, or `cu8`.
+
+It also supports a new prefix:
+* `n"`: native encoding. This is the default in C, unless some prefix is applied.
+
+These prefixes can be used from both C compatible and C incompatible code.
+
+In C-incompatible mode (described below), plain unprefixed string literals are pascal style. In C-compatible, they are c style, as expected.
+
+Additionally, in C-incompatible mode, all strings (both pascal and c) are in UTF8 (the equivalent of c29's u8 strings) unless prefixed with `n`. This means strings are of type unsigned char instead of normal char. Both types of string literal in C-incompatible mode also are C5 array typed. To give an example:
+```C5
+// c compatible mode
+char x[2] = "a";
+// c incompatible mode
+array<char8_t, 1> x = "a";
+```
+
+One footgun here is that in C-incompatible mode, things like `puts("hi")` will read past the end of the string, since there is no null terminator. It is necessary to prefix them: `puts(nc"hi")`. It is generally recommended to use the C5 standard library primitives instead.
 
 ### Destructuring and extending switch
 We introduce destructuring syntax for variable assignments and switches.
-The syntax broadly mimics ML-family languages, where destructuring appears similar to the designated initalizer syntax.
+The syntax broadly mimics ML-family languages, where destructuring appears similar to the designated initializer syntax.
 ```C5
 struct Point {
   int x;
@@ -260,19 +317,24 @@ To avoid binding certain fields, you can write:
 {int, auto y} = get_point();
 ```
 This mirrors how unnamed parameters work in functions.
+Nested destructuring is also possible.
 
-But, the standout use case is in switch. We permit switching on structs as well as numbers.
+But, the standout use case is in switch. We permit switching on structs as well as numbers. First match wins.
 ```C5
 switch(get_point()) {
   case {1, int y}: {
     return y;
   }
-  case {2, int y}: 
+  case {2, int y}: { 
     printf("hello %d", y);
     break;
   }
 }
 ```
+
+The rules are that if you use destructuring in a switch where you bind variables, you must use a block for the case. Your bound variables exit scope at the end.
+You can destructure unions in switches. This allows you to emulate tagged unions. However, there are no rules for accessing the wrong case. You must be careful.
+
 
 The main reason for importing this feature is to get multiple return values. 
 Specifically, the greatest ergonomic improvements come from error handling:
@@ -297,30 +359,45 @@ if(kind != RESULT_OK) {
 
 // or, to use pattern matching:
 char* data;
-switch(readFile("foo.txt") {
-  case {.kind=RESULT_OK, .data=auto val}:
+switch(readFile("foo.txt")) {
+  case {.kind=RESULT_OK, .data=auto val}: {
     data = val;
     break;
-  case {.kind=RESULT_ERR, .err=auto e}:
+  }
+  case {.kind=RESULT_ERR, .err=auto e}: {
     return e;
+  }
 }
 
 ```
 
-These names that are introduced into the scope are actually aliases for the struct names. 
+These names that are introduced into the scope are actually aliases for the struct members. 
 Thus, things like bitfields should still have the same effect.
 
-### Miscellaneous smaller changes:
+Destructuring works the following way:
+```C5
+{int x, int y} = get_point();
+dosomething(y);
+// desugars to
+Point p = get_point();
+dosomething(p.y);
+```
+
+Thus, bitints and such work as expected.
+
+### Miscellaneous smaller changes and notes:
 
 * sizeof and typeof require parentheses around their arguments.
 * return statements take initializer lists in the grammar, enabling using struct initializers in return position. 
+* C29's defer is implemented (exactly the way it is in C29).
+* Range syntax for cases is identical to the range syntax for slices (described in C29). 
 
 ## A closer look at C5 polymorphism
 
-`generic` and `template` may preceede the following:
+`generic` and `template` may precede the following:
 * struct declarations
 * functions
-* variable declatations.
+* variable declarations.
 
 For `template` functions and variable declarations, the compiler will generate a family of related values for each instantiation. 
 For `generic` functions and variable declarations, the compiler will generate at most one.
@@ -331,7 +408,7 @@ generic<type A, size B, constness C>
 ```
 Each parameter must be either `type`, `size`, `constness`.
 
-A `<` following an identifier opens an argument list only if that identifier names a `generic` or `template` entity (or one of the builtins `array` and `slice`) in the current scope; otherwise it is the less-than operator.
+A `<` following an identifier opens an argument list only if that identifier names a `generic` or `template` entity in the current scope, or is one of the keywords `array` and `slice`; otherwise it is the less-than operator.
 Inside an argument list, a `>>` token closes two lists, so `Vec<Vec<int>>` is valid. A `size` argument that contains a top-level `>` or `>>` must be parenthesized, e.g. `array<int, (N > 4 ? 8 : 4)>`.
 
 
@@ -344,7 +421,7 @@ However, their members are unknown, and duck typing C++ style doesn't work. They
 Constness has two values: `const` and `mut`. Mut is the default. It captures the difference between a type having const and not. It does not capture other modifiers like atomic, volatile, or restrict.
 
 ### Size parameters
-C5 offers an `size` generic parameter that allows template or generic functions to abstract over array sizes.
+C5 offers a `size` parameter that allows template or generic functions to abstract over array sizes.
 In generic functions, this value is totally erased. It is not legal to access N or measure the size of the array.
 In template functions, this value is accessible as a constexpr of type size_t. 
 Specialization failures (eg via _Static_assert), unlike C++, are real errors, and will be realized at the place of instantiation.
@@ -367,10 +444,10 @@ typedef struct {
 
 // functions can use Collection while being ignorant about the actual type like:
 generic<type C, type E>
-E* first(C* c)(using CollectionVT<C, E> coll_vt) { return coll_vt.at(c, 0); }
+E* first(C* c, implicit CollectionVT<C, E> coll_vt) { return coll_vt.at(c, 0); }
 
 // We can implement Collection for vec by defining a global variable.
-generic<type T, type A>
+template<type T, type A>
 given const CollectionVT<Vec<T, A>, T> COLL_VEC = { .len = vec_len<T, A>, .at = vec_at<T, A> };
 
 // now if we want to use first for a vec of ints, we can:
@@ -379,31 +456,95 @@ int main() {
     vec_push(&x, 1);
 
     // automatically infers type and uses the selected instance
+    // the most recent match that satisfies constraints is used.
     int* f = first(&x);
 }
 ```
 
+### Implicit Arguments and Type Inference
 
-### Controlling C compatibility
+Suppose we have a call `f<template_args>(args, .overrides=overrides)`. Then:
+1. First, explicit template arguments take precedence. Either the list is omitted, or all arguments must be written, using `auto` for those to be inferred.
+2. Second, we infer from arguments. We unify the parameter type with the argument type. Before unification, the argument undergoes lvalue->rvalue conversion, and pointer decay if a standard C array. Top level qualifiers are dropped. 
+   * Implicit conversions are not considered, except for constness conversions. Const can also be captured via a constness qualifier. 
+   * Conflicting bindings are an error.
+   * We infer from left to right at the call site. Ordering of named parameters matters for whether resolution succeeds or not.
+3. We then unify the return type of the call with the expected type, but only in the contexts: 
+    * the right side of =
+    * the operand of return
+    * the whole initializer of a declaration with a concrete type.
+    * In other contexts, this is skipped.
+4. Finally, we search for givens for the remaining implicit parameters:
+    * We search all candidates in scope, most recent first. 
+    * The first candidate whose type unifies with the parameter is selected.
+    * There is no backtracking.
+
+
+In a template or generic context, the inference proceeds treating the type parameters as an opaque object. It only happens once per definition, not once per instantiation.
+
+### Linking
+Each instantiation of a template function or variable is a single entity across the program.
+
+It has a canonical name:
+* One space between parameters, after the comma. The last parameter has no space.
+* all typedefs resolved. Structs have a space but no newline between members. The last member has no space between the semicolon and the end bracket.
+* size arguments as decimal numbers
+* mut and const arguments written out
+
+Eg, if we have:
+```C5
+template<type T, size N, constness C>
+C array<T, N> foo(C array<T, N> in) {
+    return in;
+}
+```
+Then a fully qualified instantiation might be 
+```
+foo<struct {int x; int y;}, 5, const>
+```
+
+## Controlling C compatibility
 
 Different files have different requirements for classical C compatibility. There are two modes for c5:
 1. C compatible
 2. C incompatible
 
 In reality, both are slightly incompatible with C. But the former is far more compatible.
+Mode applies per file. When the file being parsed or included ends in .c or .h, it is parsed in C compatible mode. If it ends in .c5 or .h5 it is parsed in C incompatible mode.
+
+### C5 C-Incompatible Mode
 
 In idiomatic C5, the following are banned:
 1. VLAs
 2. _Generic
 3. Normal C array
 
-Also, like in C++, struct names and enum names are accessible without prefix "struct" or "enum".
+Also, like in C++, struct names and enum names are accessible without prefix "struct", "enum", or "union". This follows C++ rules.
 
-But, when parsing in C compatible mode, they are kept available. Additionally, in C compatible mode, all keywords are of the form _Template, _Generic, _Let, etc.
-You must do:
+The list of reserved keywords in C5 incompatible mode is:
+* generic
+* template
+* given
+* implicit
+* array
+* slice
+
+There are also contextual keywords:
+* As the first word of a parameter in a generic or template parameter list
+    * type
+    * size
+    * constness
+* As the argument for a constness parameter
+    * mut
+
+
+### C5 C-Compatible Mode
+
+When parsing in C compatible mode, the banned features are kept available. Additionally, in C compatible mode, all novel keywords are of the form _C5Template, _C5Generic, etc.
+You can do:
 ```C
 #include <c5.h>
 ```
-to include the keywords.
+to be able to use the reserved keywords. (These keywords work in C-incompatible mode as well, in case you included c5.h in C-compatible mode).
 
-When the file being parsed or included ends in .c or .h, it is parsed in C compatible mode. If it ends in .c5 or .h5 it is parsed in C incompatible mode. 
+`sizeof` requires parentheses here too.

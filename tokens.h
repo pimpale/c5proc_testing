@@ -119,6 +119,14 @@ TOKEN(T__ALIGNOF__,   "__alignof__")
 TOKEN(T__ASM__,       "__asm__")
 TOKEN(T__ATTRIBUTE__, "__attribute__")
 
+/* C5 keywords, available in all files */
+TOKEN(T_C5ARRAY,      "_C5Array")
+TOKEN(T_C5GENERIC,    "_C5Generic")
+TOKEN(T_C5GIVEN,      "_C5Given")
+TOKEN(T_C5IMPLICIT,   "_C5Implicit")
+TOKEN(T_C5SLICE,      "_C5Slice")
+TOKEN(T_C5TEMPLATE,   "_C5Template")
+
 /* other identifiers */
 TOKEN(TDEFINE,        "define")
 TOKEN(TELIF,          "elif")
@@ -132,6 +140,21 @@ TOKEN(TPRAGMA,        "pragma")
 TOKEN(TUNDEF,         "undef")
 TOKEN(TWARNING,       "warning")
 TOKEN(T__VA_ARGS__,   "__VA_ARGS__")
+
+/* keywords in C5 files (see c5keyword in pp.c) */
+TOKEN(C5_ARRAY,       "array")
+TOKEN(C5_DEFER,       "defer")
+TOKEN(C5_GENERIC,     "generic")
+TOKEN(C5_GIVEN,       "given")
+TOKEN(C5_IMPLICIT,    "implicit")
+TOKEN(C5_SLICE,       "slice")
+TOKEN(C5_TEMPLATE,    "template")
+
+/* contextual keywords in generic parameter lists */
+TOKEN(C5_CONSTNESS,   "constness")
+TOKEN(C5_MUT,         "mut")
+TOKEN(C5_SIZE,        "size")
+TOKEN(C5_TYPE,        "type")
 
 /* keyword aliases */
 TOKEN(ALIAS_ALIGNAS,       "_Alignas")

@@ -3,7 +3,7 @@
 : ${CCQBE:=./cproc-qbe}
 
 if [ $# = 0 ] ; then
-	set -- test/*.c test/constraint/*.c
+	set -- test/*.c test/*.c5 test/constraint/*.c test/constraint/*.c5
 fi
 
 numtest=0
@@ -22,7 +22,8 @@ checkfail() {
 }
 
 for test ; do
-	name=${test%.c}
+	[ -e "$test" ] || continue
+	name=${test%.*}
 	case $name in
 	*+*) arch=${name##*+} ;;
 	*) arch=x86_64-sysv ;;

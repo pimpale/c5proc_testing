@@ -557,6 +557,22 @@ expandfunc(struct macro *m)
 	m->arg = arg;
 }
 
+/* whether a file is parsed in C5 (C-incompatible) mode, based on its extension */
+bool
+c5file(const char *name)
+{
+	static const char *last;
+	static bool result;
+	const char *dot;
+
+	if (name != last) {
+		last = name;
+		dot = name ? strrchr(name, '.') : NULL;
+		result = dot && (strcmp(dot, ".c5") == 0 || strcmp(dot, ".h5") == 0);
+	}
+	return result;
+}
+
 void
 next(void)
 {
@@ -582,6 +598,19 @@ next(void)
 	case ALIAS__TYPEOF__:     tok.kind = TTYPEOF;        break;
 	case ALIAS__VOLATILE__:   tok.kind = TVOLATILE;      break;
 	case ALIAS__ASM:          tok.kind = T__ASM__;       break;
+	}
+
+	/* keywords spelled in C5 files */
+	if (tok.kind >= C5_ARRAY && tok.kind <= C5_TEMPLATE && c5file(tok.loc.file)) {
+		switch (tok.kind) {
+		case C5_ARRAY:    tok.kind = T_C5ARRAY;    break;
+		case C5_DEFER:    tok.kind = T_DEFER;      break;
+		case C5_GENERIC:  tok.kind = T_C5GENERIC;  break;
+		case C5_GIVEN:    tok.kind = T_C5GIVEN;    break;
+		case C5_IMPLICIT: tok.kind = T_C5IMPLICIT; break;
+		case C5_SLICE:    tok.kind = T_C5SLICE;    break;
+		case C5_TEMPLATE: tok.kind = T_C5TEMPLATE; break;
+		}
 	}
 }
 

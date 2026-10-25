@@ -322,6 +322,7 @@ extern enum ppflags ppflags;
 
 void ppinit(void);
 
+bool c5file(const char *);
 void next(void);
 bool peek(enum tokenkind);
 char *expect(enum tokenkind, const char *);

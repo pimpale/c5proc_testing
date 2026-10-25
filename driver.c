@@ -98,6 +98,10 @@ detectfiletype(const char *name)
 			return C;
 		if (strcmp(dot, "h") == 0)
 			return CHDR;
+		if (strcmp(dot, "c5") == 0)
+			return C;
+		if (strcmp(dot, "h5") == 0)
+			return CHDR;
 		if (strcmp(dot, "i") == 0)
 			return CPPOUT;
 		if (strcmp(dot, "qbe") == 0)

@@ -1043,7 +1043,7 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 	struct scope *funcscope;
 	struct funcctx bodyctx;
 	struct func *f;
-	struct stmt *body, **bodyend;
+	struct stmt *body;
 	int align;
 
 	if (staticassert(s))
@@ -1157,9 +1157,7 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 				s = funcscope;
 				f = mkfunc(d, name, t, s);
 				bodyctx.type = t;
-				body = NULL;
-				bodyend = &body;
-				stmt(&bodyctx, s, &bodyend);
+				body = funcbody(&bodyctx, s);
 				lower(f, body);
 				delstmt(body);
 				if (d->u.func.isnoreturn)

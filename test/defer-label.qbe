@@ -1,0 +1,58 @@
+export
+function $f(w %.1) {
+@start.1
+	%.2 =l alloc4 4
+	storew %.1, %.2
+	%.4 =l alloc4 4
+	%.11 =l alloc4 4
+@body.2
+	%.3 =w loadw %.2
+	jnz %.3, @if_true.3, @if_false.4
+@if_true.3
+	storew 0, %.4
+@for_cond.5
+	%.5 =w loadw %.4
+	%.6 =w csltw %.5, 2
+	jnz %.6, @for_body.6, @for_join.8
+@for_body.6
+	%.7 =w loadw %.4
+	jnz %.7, @if_false.10, @if_true.9
+@if_true.9
+	jmp @skip.11
+@if_false.10
+	%.8 =w loadw %.4
+	call extern $put(w %.8)
+@skip.11
+	call extern $put(w 2)
+@for_cont.7
+	%.9 =w loadw %.4
+	%.10 =w add %.9, 1
+	storew %.10, %.4
+	jmp @for_cond.5
+@for_join.8
+	ret
+@if_false.4
+	call extern $put(w 3)
+	storew 0, %.11
+@for_cond.12
+	%.12 =w loadw %.11
+	%.13 =w csltw %.12, 2
+	jnz %.13, @for_body.13, @for_join.15
+@for_body.13
+	%.14 =w loadw %.11
+	jnz %.14, @if_false.17, @if_true.16
+@if_true.16
+	jmp @skip.18
+@if_false.17
+	%.15 =w loadw %.11
+	call extern $put(w %.15)
+@skip.18
+	call extern $put(w 2)
+@for_cont.14
+	%.16 =w loadw %.11
+	%.17 =w add %.16, 1
+	storew %.17, %.11
+	jmp @for_cond.12
+@for_join.15
+	ret
+}

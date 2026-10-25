@@ -46,6 +46,8 @@ mkscope(struct scope *parent)
 	s->breakstmt = parent->breakstmt;
 	s->continuestmt = parent->continuestmt;
 	s->switchstmt = parent->switchstmt;
+	s->defer = parent->defer;
+	s->indefer = parent->indefer;
 	s->parent = parent;
 
 	return s;

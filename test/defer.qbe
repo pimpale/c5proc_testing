@@ -1,0 +1,93 @@
+export
+function $block() {
+@start.1
+@body.2
+	call extern $put(w 4)
+	call extern $put(w 3)
+	call extern $put(w 2)
+	call extern $put(w 1)
+	ret
+}
+export
+function $loop(w %.1) {
+@start.3
+	%.2 =l alloc4 4
+	storew %.1, %.2
+	%.3 =l alloc4 4
+@body.4
+	storew 0, %.3
+@for_cond.5
+	%.4 =w loadw %.3
+	%.5 =w loadw %.2
+	%.6 =w csltw %.4, %.5
+	jnz %.6, @for_body.6, @for_join.8
+@for_body.6
+	%.7 =w loadw %.3
+	%.8 =w ceqw %.7, 1
+	jnz %.8, @if_true.9, @if_false.10
+@if_true.9
+	%.9 =w loadw %.3
+	call extern $put(w %.9)
+	jmp @for_cont.7
+@if_false.10
+	%.10 =w loadw %.3
+	%.11 =w ceqw %.10, 2
+	jnz %.11, @if_true.11, @if_false.12
+@if_true.11
+	%.12 =w loadw %.3
+	call extern $put(w %.12)
+	jmp @for_join.8
+@if_false.12
+	call extern $put(w 10)
+	%.13 =w loadw %.3
+	call extern $put(w %.13)
+@for_cont.7
+	%.14 =w loadw %.3
+	%.15 =w add %.14, 1
+	storew %.15, %.3
+	jmp @for_cond.5
+@for_join.8
+	ret
+}
+export
+function w $early(w %.1) {
+@start.13
+	%.2 =l alloc4 4
+	storew %.1, %.2
+@body.14
+	%.3 =w loadw %.2
+	jnz %.3, @if_true.15, @if_false.16
+@if_true.15
+	%.4 =w loadw %.2
+	call extern $put(w 2)
+	call extern $put(w 1)
+	ret %.4
+@dead.17
+	call extern $put(w 2)
+@if_false.16
+	call extern $put(w 1)
+	ret 0
+@dead.18
+	call extern $put(w 1)
+	ret
+}
+export
+function $backgoto(w %.1) {
+@start.19
+	%.2 =l alloc4 4
+	storew %.1, %.2
+@body.20
+@again.21
+	%.3 =w loadw %.2
+	%.4 =w sub %.3, 1
+	storew %.4, %.2
+	jnz %.4, @if_true.22, @if_false.23
+@if_true.22
+	%.5 =w loadw %.2
+	call extern $put(w %.5)
+	jmp @again.21
+@if_false.23
+	%.6 =w loadw %.2
+	call extern $put(w %.6)
+	ret
+}

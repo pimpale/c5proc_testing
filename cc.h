@@ -191,6 +191,9 @@ struct scope {
 	struct stmt *breakstmt;
 	struct stmt *continuestmt;
 	struct stmt *switchstmt;
+	/* innermost deferred block in effect, and deferred block being parsed */
+	struct stmt *defer;
+	struct stmt *indefer;
 	struct scope *parent;
 };
 
@@ -437,11 +440,6 @@ struct init *parseinit(struct scope *, struct type *);
 
 /* backend */
 
-struct gotolabel {
-	struct block *label;
-	bool defined;
-};
-
 struct switchcases {
 	void *root;
 	struct type *type;
@@ -454,6 +452,9 @@ struct switchcases {
 struct funcctx {
 	/* type of the function being defined */
 	struct type *type;
+	/* labels defined in the function, and goto statements to resolve */
+	struct map labels;
+	struct stmt *gotos;
 };
 
 enum stmtkind {
@@ -472,6 +473,7 @@ enum stmtkind {
 	STMTBREAK,
 	STMTCONTINUE,
 	STMTRETURN,
+	STMTDEFER,
 };
 
 /*
@@ -479,14 +481,25 @@ Statements are parsed into a tree before any code is generated. Lists
 of statements (compound statement bodies, and the labels and statement
 making up the body of a selection or iteration statement) are linked
 through `next`.
+
+Deferred blocks in effect at a point in the function form a chain
+through `u.defer.prev`, innermost first. When control leaves a block,
+the deferred blocks between the chain at the jump and the chain at
+the target are executed.
 */
 struct stmt {
 	enum stmtkind kind;
 	struct stmt *next;
+	/* innermost deferred block in effect at the start of this statement */
+	struct stmt *defer;
 	/* targets of break and continue (iteration and switch statements); set during lowering */
 	struct block *breaklabel, *continuelabel;
 	union {
-		struct stmt *compound;
+		struct {
+			struct stmt *body;
+			/* innermost deferred block in effect at the end of the block */
+			struct stmt *enddefer;
+		} compound;
 		/* expression statement, or return value (NULL for void return) */
 		struct expr *expr;
 		struct {
@@ -521,16 +534,36 @@ struct stmt {
 		struct {
 			struct stmt *switchstmt;
 			unsigned long long value;
+		} caselabel;
+		struct {
+			char *name;
+			/* deferred block containing the label, if any */
+			struct stmt *indefer;
+			/* block for the label in the current lowering of its enclosing code */
+			struct block *block;
+			unsigned epoch;
 		} label;
-		/* label and goto */
-		char *name;
-		/* break and continue */
-		struct stmt *target;
+		/* goto, break, and continue */
+		struct {
+			/* label, or iteration or switch statement */
+			struct stmt *target;
+			/* for goto */
+			char *name;
+			struct location loc;
+			struct stmt *indefer;
+			struct stmt *nextgoto;
+		} jump;
+		struct {
+			struct stmt *body;
+			/* next outer deferred block in effect */
+			struct stmt *prev;
+		} defer;
 	} u;
 };
 
 struct stmt *addstmt(struct stmt ***, enum stmtkind);
 void stmt(struct funcctx *, struct scope *, struct stmt ***);
+struct stmt *funcbody(struct funcctx *, struct scope *);
 void delstmt(struct stmt *);
 
 /* lower */
@@ -555,7 +588,7 @@ void funcjmp(struct func *, struct block *);
 void funcjnz(struct func *, struct value *, struct type *, struct block *, struct block *);
 void funcret(struct func *, struct value *);
 void funchlt(struct func *);
-struct gotolabel *funcgoto(struct func *, char *);
+struct value *funcsave(struct func *, struct type *, struct value *);
 void funcswitch(struct func *, struct value *, struct switchcases *, struct block *);
 void funcinit(struct func *, struct decl *, struct init *, bool);
 

@@ -45,6 +45,19 @@ This extension seems likely to make it into C2y ([N3804]).
 
 [N3804]: https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3804.txt
 
+### Defer statements ([TS 25755])
+
+`_Defer statement` registers `statement` to be executed when control
+leaves the enclosing block, whether by reaching its end or by `break`,
+`continue`, `return`, or `goto`. Deferred statements run in reverse order
+of registration, after the value of a `return` expression is computed.
+Jumping out of a deferred statement, or into the scope of a defer
+statement past the statement itself, is an error.
+
+The `<stddefer.h>` header defining `defer` is not provided.
+
+[TS 25755]: https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3434.htm
+
 ## Missing
 
 ### Statement expressions

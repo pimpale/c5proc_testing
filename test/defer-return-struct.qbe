@@ -1,0 +1,35 @@
+type :s.1 = { l, l, l, }
+export
+function :s.1 $f() {
+@start.1
+	%.1 =l alloc8 24
+	%.7 =l alloc8 24
+@body.2
+	%.2 =l extsw 1
+	storel %.2, %.1
+	%.3 =l add %.1, 8
+	%.4 =l extsw 2
+	storel %.4, %.3
+	%.5 =l add %.1, 16
+	%.6 =l extsw 3
+	storel %.6, %.5
+	%.8 =l loadl %.1
+	storel %.8, %.7
+	%.9 =l add %.1, 8
+	%.10 =l add %.7, 8
+	%.11 =l loadl %.9
+	storel %.11, %.10
+	%.12 =l add %.9, 8
+	%.13 =l add %.10, 8
+	%.14 =l loadl %.12
+	storel %.14, %.13
+	%.15 =l extsw 4
+	%.16 =l add %.1, 0
+	storel %.15, %.16
+	ret %.7
+@dead.3
+	%.17 =l extsw 4
+	%.18 =l add %.1, 0
+	storel %.17, %.18
+	ret
+}

@@ -32,6 +32,8 @@ label(struct funcctx *fc, struct scope *s, struct stmt ***end)
 	char *name;
 	struct stmt *st, *sw;
 	struct caselabel *c;
+	struct mapkey key;
+	size_t idx;
 	unsigned long long i;
 
 	attr(NULL, 0);
@@ -41,14 +43,16 @@ label(struct funcctx *fc, struct scope *s, struct stmt ***end)
 		sw = s->switchstmt;
 		if (!sw)
 			error(&tok.loc, "'case' label must be in switch");
+		if (s->defer != sw->defer)
+			error(&tok.loc, "'case' label must not be in the scope of a defer statement in its switch");
 		i = intconstexpr(s, true);
 		c = treeinsert(&sw->u.switchstmt.seen, i, sizeof(*c));
 		if (!c->node.new)
 			error(&tok.loc, "multiple 'case' labels with same value");
 		st = addstmt(end, STMTCASE);
 		c->stmt = st;
-		st->u.label.switchstmt = sw;
-		st->u.label.value = i;
+		st->u.caselabel.switchstmt = sw;
+		st->u.caselabel.value = i;
 		expect(TCOLON, "after case expression");
 		break;
 	case TDEFAULT:
@@ -56,12 +60,14 @@ label(struct funcctx *fc, struct scope *s, struct stmt ***end)
 		sw = s->switchstmt;
 		if (!sw)
 			error(&tok.loc, "'default' label must be in switch");
+		if (s->defer != sw->defer)
+			error(&tok.loc, "'default' label must not be in the scope of a defer statement in its switch");
 		if (sw->u.switchstmt.hasdefault)
 			error(&tok.loc, "multiple 'default' labels");
 		expect(TCOLON, "after 'default'");
 		sw->u.switchstmt.hasdefault = true;
 		st = addstmt(end, STMTDEFAULT);
-		st->u.label.switchstmt = sw;
+		st->u.caselabel.switchstmt = sw;
 		break;
 	default:
 		if (tok.kind < TIDENT)
@@ -69,8 +75,14 @@ label(struct funcctx *fc, struct scope *s, struct stmt ***end)
 		name = tokenstr(tok.kind);
 		if (!peek(TCOLON))
 			return false;
+		mapkey(&key, name, strlen(name));
+		if (!mapput(&fc->labels, &key, &idx))
+			error(&tok.loc, "label '%s' redefined", name);
 		st = addstmt(end, STMTLABEL);
-		st->u.name = name;
+		fc->labels.vals[idx].p = st;
+		st->defer = s->defer;
+		st->u.label.name = name;
+		st->u.label.indefer = s->indefer;
 		break;
 	}
 	return true;
@@ -84,6 +96,35 @@ labelstmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 	stmt(fc, s, end);
 }
 
+/*
+Parse the body of a selection or iteration statement in the scope `s`
+created for it. This is a block, so deferred blocks registered inside
+it are executed when it finishes.
+*/
+static void
+secondary(struct funcctx *fc, struct scope *s, struct stmt ***end)
+{
+	struct stmt *st, **body;
+
+	st = addstmt(end, STMTCOMPOUND);
+	st->defer = s->defer;
+	body = &st->u.compound.body;
+	labelstmt(fc, s, &body);
+	st->u.compound.enddefer = s->defer;
+}
+
+static struct stmt *
+jumpstmt(struct scope *s, struct stmt ***end, enum stmtkind kind)
+{
+	struct stmt *st;
+
+	st = addstmt(end, kind);
+	st->defer = s->defer;
+	st->u.jump.loc = tok.loc;
+	st->u.jump.indefer = s->indefer;
+	return st;
+}
+
 /* 6.8 Statements and blocks */
 void
 stmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
@@ -92,6 +133,7 @@ stmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 	struct expr *e;
 	struct type *t;
 	struct stmt *st, **body;
+	struct scope *ds;
 
 	attr(NULL, 0);
 	switch (tok.kind) {
@@ -99,12 +141,14 @@ stmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 	case TLBRACE:
 		next();
 		st = addstmt(end, STMTCOMPOUND);
-		body = &st->u.compound;
+		st->defer = s->defer;
+		body = &st->u.compound.body;
 		s = mkscope(s);
 		while (tok.kind != TRBRACE) {
 			if (!label(fc, s, &body) && !decl(s, fc, &body))
 				stmt(fc, s, &body);
 		}
+		st->u.compound.enddefer = s->defer;
 		s = delscope(s);
 		next();
 		break;
@@ -135,14 +179,14 @@ stmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 
 		body = &st->u.ifstmt.then;
 		s = mkscope(s);
-		labelstmt(fc, s, &body);
+		secondary(fc, s, &body);
 		s = delscope(s);
 
 		if (consume(TELSE)) {
 			st->u.ifstmt.haselse = true;
 			body = &st->u.ifstmt.els;
 			s = mkscope(s);
-			labelstmt(fc, s, &body);
+			secondary(fc, s, &body);
 			s = delscope(s);
 		}
 		s = delscope(s);
@@ -160,12 +204,13 @@ stmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 		e = exprpromote(e);
 
 		st = addstmt(end, STMTSWITCH);
+		st->defer = s->defer;
 		st->u.switchstmt.cond = e;
 		body = &st->u.switchstmt.body;
 		s = mkscope(s);
 		s->breakstmt = st;
 		s->switchstmt = st;
-		labelstmt(fc, s, &body);
+		secondary(fc, s, &body);
 		s = delscope(s);
 		s = delscope(s);
 		break;
@@ -182,12 +227,13 @@ stmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 		expect(TRPAREN, "after expression");
 
 		st = addstmt(end, STMTWHILE);
+		st->defer = s->defer;
 		st->u.loop.cond = e;
 		body = &st->u.loop.body;
 		s = mkscope(s);
 		s->continuestmt = st;
 		s->breakstmt = st;
-		labelstmt(fc, s, &body);
+		secondary(fc, s, &body);
 		s = delscope(s);
 		s = delscope(s);
 		break;
@@ -195,12 +241,13 @@ stmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 		next();
 
 		st = addstmt(end, STMTDO);
+		st->defer = s->defer;
 		body = &st->u.loop.body;
 		s = mkscope(s);
 		s = mkscope(s);
 		s->continuestmt = st;
 		s->breakstmt = st;
-		labelstmt(fc, s, &body);
+		secondary(fc, s, &body);
 		s = delscope(s);
 
 		expect(TWHILE, "after 'do' statement");
@@ -220,6 +267,7 @@ stmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 		expect(TLPAREN, "after 'for'");
 		s = mkscope(s);
 		st = addstmt(end, STMTFOR);
+		st->defer = s->defer;
 		body = &st->u.loop.init;
 		if (!decl(s, fc, &body)) {
 			if (tok.kind != TSEMICOLON)
@@ -242,7 +290,7 @@ stmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 		s = mkscope(s);
 		s->breakstmt = st;
 		s->continuestmt = st;
-		labelstmt(fc, s, &body);
+		secondary(fc, s, &body);
 		s = delscope(s);
 		s = delscope(s);
 		break;
@@ -250,39 +298,105 @@ stmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 	/* 6.8.6 Jump statements */
 	case TGOTO:
 		next();
+		st = jumpstmt(s, end, STMTGOTO);
 		name = expect(TIDENT, "after 'goto'");
-		st = addstmt(end, STMTGOTO);
-		st->u.name = name;
+		st->u.jump.name = name;
+		st->u.jump.nextgoto = fc->gotos;
+		fc->gotos = st;
 		expect(TSEMICOLON, "after 'goto' statement");
 		break;
 	case TCONTINUE:
 		next();
 		if (!s->continuestmt)
-			error(&tok.loc, "'continue' statement must be in loop");
-		st = addstmt(end, STMTCONTINUE);
-		st->u.target = s->continuestmt;
+			error(&tok.loc, s->indefer ? "'continue' statement must not exit a deferred block" : "'continue' statement must be in loop");
+		st = jumpstmt(s, end, STMTCONTINUE);
+		st->u.jump.target = s->continuestmt;
 		expect(TSEMICOLON, "after 'continue' statement");
 		break;
 	case TBREAK:
 		next();
 		if (!s->breakstmt)
-			error(&tok.loc, "'break' statement must be in loop or switch");
-		st = addstmt(end, STMTBREAK);
-		st->u.target = s->breakstmt;
+			error(&tok.loc, s->indefer ? "'break' statement must not exit a deferred block" : "'break' statement must be in loop or switch");
+		st = jumpstmt(s, end, STMTBREAK);
+		st->u.jump.target = s->breakstmt;
 		expect(TSEMICOLON, "after 'break' statement");
 		break;
 	case TRETURN:
 		next();
+		if (s->indefer)
+			error(&tok.loc, "'return' statement must not be in a deferred block");
 		t = fc->type;
 		st = addstmt(end, STMTRETURN);
+		st->defer = s->defer;
 		if (t->base != &typevoid)
 			st->u.expr = exprassign(expr(s), t->base);
 		expect(TSEMICOLON, "after 'return' statement");
 		break;
 
+	/* TS 25755 Defer statement */
+	case T_DEFER:
+		next();
+		st = addstmt(end, STMTDEFER);
+		st->u.defer.prev = s->defer;
+
+		/* jumps out of the deferred block are not allowed */
+		ds = mkscope(s);
+		ds->breakstmt = NULL;
+		ds->continuestmt = NULL;
+		ds->switchstmt = NULL;
+		ds->defer = NULL;
+		ds->indefer = st;
+		body = &st->u.defer.body;
+		stmt(fc, ds, &body);
+		delscope(ds);
+
+		/* in effect for the rest of the enclosing block */
+		s->defer = st;
+		break;
+
 	case T__ASM__:
 		error(&tok.loc, "inline assembly is not yet supported");
 	}
+}
+
+static void
+resolvegoto(struct funcctx *fc, struct stmt *st)
+{
+	struct stmt *l, *d;
+	struct mapkey key;
+	char *name;
+
+	name = st->u.jump.name;
+	mapkey(&key, name, strlen(name));
+	l = mapget(&fc->labels, &key, NULL);
+	if (!l)
+		error(&st->u.jump.loc, "label '%s' is not defined", name);
+	if (l->u.label.indefer != st->u.jump.indefer)
+		error(&st->u.jump.loc, "'goto' must not jump into or out of a deferred block");
+	/* the deferred blocks in effect at the label must also be in effect at the goto */
+	for (d = st->defer; d != l->defer; d = d->u.defer.prev) {
+		if (!d)
+			error(&st->u.jump.loc, "'goto' must not jump into the scope of a defer statement");
+	}
+	st->u.jump.target = l;
+}
+
+/* parse a function body, starting at its compound statement */
+struct stmt *
+funcbody(struct funcctx *fc, struct scope *s)
+{
+	struct stmt *body, **end, *st;
+
+	mapinit(&fc->labels, 8);
+	fc->gotos = NULL;
+	body = NULL;
+	end = &body;
+	stmt(fc, s, &end);
+	for (st = fc->gotos; st; st = st->u.jump.nextgoto)
+		resolvegoto(fc, st);
+	mapfree(&fc->labels, NULL);
+
+	return body;
 }
 
 static void
@@ -301,7 +415,7 @@ delstmt(struct stmt *st)
 {
 	switch (st->kind) {
 	case STMTCOMPOUND:
-		delstmts(st->u.compound);
+		delstmts(st->u.compound.body);
 		break;
 	case STMTEXPR:
 		delexpr(st->u.expr);
@@ -327,6 +441,9 @@ delstmt(struct stmt *st)
 	case STMTRETURN:
 		if (st->u.expr)
 			delexpr(st->u.expr);
+		break;
+	case STMTDEFER:
+		delstmts(st->u.defer.body);
 		break;
 	}
 	free(st);

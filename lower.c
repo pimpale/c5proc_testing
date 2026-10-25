@@ -18,17 +18,95 @@ lowerstmts(struct func *f, struct stmt *st)
 		lowerstmt(f, st);
 }
 
+/*
+Deferred blocks are lowered once for each way of leaving their scope.
+Each lowering of a deferred block gets a new epoch, so that labels
+inside it get new blocks.
+*/
+static unsigned epoch, nextepoch;
+
+static struct block *
+labelblock(struct stmt *st)
+{
+	if (!st->u.label.block || st->u.label.epoch != epoch) {
+		st->u.label.block = mkblock(st->u.label.name);
+		st->u.label.epoch = epoch;
+	}
+	return st->u.label.block;
+}
+
+static void
+clearvla(struct type *t)
+{
+	for (; t && t->prop & PROPVM; t = t->base) {
+		if (t->kind == TYPEARRAY && !t->size)
+			t->u.array.size = NULL;
+	}
+}
+
+/*
+Forget the sizes of variable length arrays declared in a deferred
+block, so that they are computed again in its next lowering.
+*/
+static void
+clearvlas(struct stmt *st)
+{
+	for (; st; st = st->next) {
+		switch (st->kind) {
+		case STMTCOMPOUND:
+			clearvlas(st->u.compound.body);
+			break;
+		case STMTDECL:
+			if (st->u.decl.decl)
+				clearvla(st->u.decl.decl->type);
+			break;
+		case STMTIF:
+			clearvlas(st->u.ifstmt.then);
+			clearvlas(st->u.ifstmt.els);
+			break;
+		case STMTSWITCH:
+			clearvlas(st->u.switchstmt.body);
+			break;
+		case STMTWHILE:
+		case STMTDO:
+		case STMTFOR:
+			clearvlas(st->u.loop.init);
+			clearvlas(st->u.loop.body);
+			break;
+		case STMTDEFER:
+			clearvlas(st->u.defer.body);
+			break;
+		}
+	}
+}
+
+/* execute the deferred blocks in effect at `from` but not at `to` */
+static void
+rundefers(struct func *f, struct stmt *from, struct stmt *to)
+{
+	struct stmt *d;
+	unsigned oldepoch;
+
+	for (d = from; d != to; d = d->u.defer.prev) {
+		oldepoch = epoch;
+		epoch = ++nextepoch;
+		lowerstmts(f, d->u.defer.body);
+		epoch = oldepoch;
+		clearvlas(d->u.defer.body);
+	}
+}
+
 static void
 lowerstmt(struct func *f, struct stmt *st)
 {
-	struct gotolabel *g;
 	struct switchcases *cases;
 	struct value *v;
 	struct block *b[4];
 
 	switch (st->kind) {
 	case STMTCOMPOUND:
-		lowerstmts(f, st->u.compound);
+		lowerstmts(f, st->u.compound.body);
+		rundefers(f, st->u.compound.enddefer, st->defer);
 		break;
 	case STMTEXPR:
 		funcexpr(f, st->u.expr);
@@ -80,10 +158,10 @@ lowerstmt(struct func *f, struct stmt *st)
 	case STMTCASE:
 		b[0] = mkblock("switch_case");
 		funclabel(f, b[0]);
-		switchcase(&st->u.label.switchstmt->u.switchstmt.cases, st->u.label.value, b[0]);
+		switchcase(&st->u.caselabel.switchstmt->u.switchstmt.cases, st->u.caselabel.value, b[0]);
 		break;
 	case STMTDEFAULT:
-		cases = &st->u.label.switchstmt->u.switchstmt.cases;
+		cases = &st->u.caselabel.switchstmt->u.switchstmt.cases;
 		cases->defaultlabel = mkblock("switch_default");
 		funclabel(f, cases->defaultlabel);
 		break;
@@ -139,22 +217,32 @@ lowerstmt(struct func *f, struct stmt *st)
 		funclabel(f, b[3]);
 		break;
 	case STMTLABEL:
-		g = funcgoto(f, st->u.name);
-		g->defined = true;
-		funclabel(f, g->label);
+		funclabel(f, labelblock(st));
 		break;
 	case STMTGOTO:
-		funcjmp(f, funcgoto(f, st->u.name)->label);
+		rundefers(f, st->defer, st->u.jump.target->defer);
+		funcjmp(f, labelblock(st->u.jump.target));
 		break;
 	case STMTCONTINUE:
-		funcjmp(f, st->u.target->continuelabel);
+		rundefers(f, st->defer, st->u.jump.target->defer);
+		funcjmp(f, st->u.jump.target->continuelabel);
 		break;
 	case STMTBREAK:
-		funcjmp(f, st->u.target->breaklabel);
+		rundefers(f, st->defer, st->u.jump.target->defer);
+		funcjmp(f, st->u.jump.target->breaklabel);
 		break;
 	case STMTRETURN:
 		v = st->u.expr ? funcexpr(f, st->u.expr) : NULL;
+		if (st->defer) {
+			/* the return value is computed before deferred blocks are executed */
+			if (v)
+				v = funcsave(f, st->u.expr->type, v);
+			rundefers(f, st->defer, NULL);
+		}
 		funcret(f, v);
+		break;
+	case STMTDEFER:
+		/* executed when its scope is exited */
 		break;
 	}
 }

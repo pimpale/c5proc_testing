@@ -1,0 +1,1 @@
+error: 'goto' must not jump into the scope of a defer statement

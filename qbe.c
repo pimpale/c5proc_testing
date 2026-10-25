@@ -95,7 +95,6 @@ struct func {
 	struct value *paramtemps;
 	struct type *type;
 	struct block *start, *end;
-	struct map gotos;
 	unsigned lastid;
 };
 
@@ -522,7 +521,6 @@ mkfunc(struct decl *decl, char *name, struct type *t, struct scope *s)
 	f->type = t;
 	f->start = f->end = mkblock("start");
 	f->lastid = 0;
-	mapinit(&f->gotos, 8);
 	emittype(t->base);
 
 	/* allocate space for parameters */
@@ -565,7 +563,6 @@ delfunc(struct func *f)
 		free(b->insts.val);
 		free(b);
 	}
-	mapfree(&f->gotos, free);
 	free(f);
 }
 
@@ -638,21 +635,20 @@ funchlt(struct func *f)
 		b->jump.kind = JUMP_HLT;
 }
 
-struct gotolabel *
-funcgoto(struct func *f, char *name)
+/* copy an aggregate value to new storage, so that later stores do not affect it */
+struct value *
+funcsave(struct func *f, struct type *t, struct value *v)
 {
-	struct gotolabel *g;
-	struct mapkey key;
-	size_t idx;
+	struct decl *d;
 
-	mapkey(&key, name, strlen(name));
-	if (mapput(&f->gotos, &key, &idx)) {
-		g = xmalloc(sizeof(*g));
-		g->label = mkblock(name);
-		f->gotos.vals[idx].p = g;
-	}
-
-	return f->gotos.vals[idx].p;
+	if (t->kind != TYPESTRUCT && t->kind != TYPEUNION)
+		return v;
+	d = mkdecl(NULL, DECLOBJECT, t, QUALNONE, LINKNONE);
+	d->u.obj.align = t->align;
+	funcalloc(f, d);
+	if (t->size)
+		funccopy(f, d->value, v, t->size, t->align);
+	return d->value;
 }
 
 static struct lvalue

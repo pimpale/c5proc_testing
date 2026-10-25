@@ -40,6 +40,8 @@ struct type typedouble  = FLTTYPE(TYPEDOUBLE, 8);
 struct type typeldouble = FLTTYPE(TYPELDOUBLE, 16);
 
 struct type typenullptr = {.kind = TYPENULLPTR, .size = 8, .align = 8, .prop = PROPSCALAR};
+/* placeholder for a type to be inferred from an initializer */
+struct type typeauto    = {.kind = TYPENONE, .incomplete = true};
 
 struct type *typeadjvalist;
 

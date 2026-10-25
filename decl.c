@@ -96,13 +96,18 @@ storageclass(enum storageclass *sc)
 	}
 	if (!sc)
 		error(&tok.loc, "storage class not allowed in this declaration");
-	switch (*sc) {
+	switch (*sc & ~SCAUTO) {
 	case SCNONE:        allowed = ~SCNONE;           break;
 	case SCTHREADLOCAL: allowed = SCSTATIC|SCEXTERN; break;
 	case SCSTATIC:
 	case SCEXTERN:      allowed = SCTHREADLOCAL;     break;
 	default:            allowed = SCNONE;            break;
 	}
+	/* C23 6.7.1p2: auto may appear with any storage-class specifier except typedef */
+	if (new == SCAUTO)
+		allowed = *sc & (SCAUTO|SCTYPEDEF) ? SCNONE : SCAUTO;
+	else if (*sc & SCAUTO && new == SCTYPEDEF)
+		allowed = SCNONE;
 	if (new & ~allowed)
 		error(&tok.loc, "invalid combination of storage class specifiers");
 	*sc |= new;
@@ -522,6 +527,9 @@ done:
 		if (other->base->kind == TYPEFUNC)
 			error(&tok.loc, "'restrict' applied to function pointer");
 	}
+	/* C23 6.7.10 Type inference */
+	if (!t && sc && *sc & SCAUTO)
+		t = &typeauto;
 	if (!t && (tq || sc && *sc || fs && *fs))
 		error(&tok.loc, "declaration has no type specifier");
 	/*
@@ -1000,6 +1008,30 @@ declcommon(struct scope *s, enum declkind kind, char *name, char *asmname, struc
 	return d;
 }
 
+/*
+Parse the initializer of a declaration with an inferred type (after the
+'='), and store the inferred type in `t`.
+*/
+static struct init *
+inferinit(struct scope *s, struct type **t)
+{
+	struct expr *e;
+	bool braced;
+
+	braced = consume(TLBRACE);
+	e = assignexpr(s);
+	if (braced) {
+		consume(TCOMMA);
+		expect(TRBRACE, "after initializer");
+	}
+	*t = e->type;
+	if (*t == &typevoid)
+		error(&tok.loc, "cannot infer type from expression with type 'void'");
+	if ((*t)->prop & PROPSCALAR)
+		e = exprassign(e, *t);
+	return mkinit(0, (*t)->size, (struct bitfield){0}, e);
+}
+
 static void
 defineobj(struct decl *d, struct init *init, bool hasinit, struct stmt ***end)
 {
@@ -1034,7 +1066,7 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 	enum storageclass sc;
 	enum funcspec fs;
 	struct attr a;
-	struct init *init;
+	struct init *init, *autoinit;
 	bool hasinit;
 	char *name, *asmname;
 	int allowfunc = !fc;
@@ -1054,6 +1086,11 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 	base = declspecs(s, &sc, &fs, &align);
 	if (!base.type)
 		return false;
+	/* with an inferred type, auto has no effect on storage duration or linkage */
+	if (base.type == &typeauto)
+		sc &= ~SCAUTO;
+	else if (sc & SCAUTO && sc != SCAUTO)
+		error(&tok.loc, "'auto' with another storage-class specifier requires an inferred type");
 	if (fc) {
 		if (sc == SCTHREADLOCAL)
 			error(&tok.loc, "block scope declaration containing 'thread_local' must contain 'static' or 'extern'");
@@ -1065,6 +1102,8 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 			error(&tok.loc, "external declaration must not contain 'register'");
 	}
 	if (consume(TSEMICOLON)) {
+		if (base.type == &typeauto)
+			error(&tok.loc, "declaration with inferred type has no declarator");
 		/* XXX 6.7p2 error unless in function parameter/struct/union, or tag/enum members are declared */
 		return true;
 	}
@@ -1072,6 +1111,16 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 		qt = declarator(s, base, &name, NULL, &funcscope, false);
 		t = qt.type;
 		tq = qt.qual;
+		autoinit = NULL;
+		if (base.type == &typeauto) {
+			if (t != &typeauto)
+				error(&tok.loc, "declarator of '%s' with inferred type must be an identifier", name);
+			if (sc & SCTYPEDEF)
+				error(&tok.loc, "typedef '%s' cannot have inferred type", name);
+			if (!consume(TASSIGN))
+				error(&tok.loc, "declaration of '%s' with inferred type must have an initializer", name);
+			autoinit = inferinit(s, &t);
+		}
 		if (consume(T__ASM__)) {
 			struct stringlit lit;
 
@@ -1119,12 +1168,12 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 				addstmt(end, STMTDECL)->u.decl.vm = base.expr;
 			init = NULL;
 			hasinit = false;
-			if (consume(TASSIGN)) {
+			if (autoinit || consume(TASSIGN)) {
 				if (fc && d->linkage != LINKNONE)
 					error(&tok.loc, "object '%s' with block scope and %s linkage cannot have initializer", name, d->linkage == LINKEXTERN ? "external" : "internal");
 				if (d->defined)
 					error(&tok.loc, "object '%s' redefined", name);
-				init = parseinit(s, d->type);
+				init = autoinit ? autoinit : parseinit(s, d->type);
 				hasinit = true;
 			} else if (sc & SCEXTERN) {
 				break;

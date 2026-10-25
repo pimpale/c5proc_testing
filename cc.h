@@ -354,6 +354,7 @@ extern struct type typelong, typeulong;
 extern struct type typellong, typeullong;
 extern struct type typefloat, typedouble, typeldouble;
 extern struct type typenullptr;
+extern struct type typeauto;
 extern struct type *typeadjvalist;
 
 /* targ */

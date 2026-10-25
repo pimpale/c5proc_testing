@@ -1,6 +1,8 @@
 #include <stdio.h>
 
 struct func;
+struct funcctx;
+struct stmt;
 
 enum tokenkind {
 #define TOKEN(t, s) t,
@@ -185,9 +187,10 @@ struct decl {
 struct scope {
 	struct map tags;
 	struct map decls;
-	struct block *breaklabel;
-	struct block *continuelabel;
-	struct switchcases *switchcases;
+	/* innermost enclosing statements targeted by break, continue, and case labels */
+	struct stmt *breakstmt;
+	struct stmt *continuestmt;
+	struct stmt *switchstmt;
 	struct scope *parent;
 };
 
@@ -388,7 +391,7 @@ bool gnuattr(struct attr *, enum attrkind);
 /* decl */
 
 struct decl *mkdecl(char *name, enum declkind, struct type *, enum typequal, enum linkage);
-bool decl(struct scope *, struct func *);
+bool decl(struct scope *, struct funcctx *, struct stmt ***);
 struct type *typename(struct scope *, enum typequal *, struct expr **);
 
 struct decl *stringdecl(struct expr *);
@@ -431,9 +434,6 @@ struct expr *eval(struct expr *);
 struct init *mkinit(unsigned long long, unsigned long long, struct bitfield, struct expr *);
 struct init *parseinit(struct scope *, struct type *);
 
-/* stmt */
-
-void stmt(struct func *, struct scope *);
 
 /* backend */
 
@@ -447,6 +447,95 @@ struct switchcases {
 	struct type *type;
 	struct block *defaultlabel;
 };
+
+/* stmt */
+
+/* state needed while parsing a function body */
+struct funcctx {
+	/* type of the function being defined */
+	struct type *type;
+};
+
+enum stmtkind {
+	STMTCOMPOUND,
+	STMTEXPR,
+	STMTDECL,
+	STMTIF,
+	STMTSWITCH,
+	STMTCASE,
+	STMTDEFAULT,
+	STMTWHILE,
+	STMTDO,
+	STMTFOR,
+	STMTLABEL,
+	STMTGOTO,
+	STMTBREAK,
+	STMTCONTINUE,
+	STMTRETURN,
+};
+
+/*
+Statements are parsed into a tree before any code is generated. Lists
+of statements (compound statement bodies, and the labels and statement
+making up the body of a selection or iteration statement) are linked
+through `next`.
+*/
+struct stmt {
+	enum stmtkind kind;
+	struct stmt *next;
+	/* targets of break and continue (iteration and switch statements); set during lowering */
+	struct block *breaklabel, *continuelabel;
+	union {
+		struct stmt *compound;
+		/* expression statement, or return value (NULL for void return) */
+		struct expr *expr;
+		struct {
+			/* NULL if this only evaluates `vm` */
+			struct decl *decl;
+			struct init *init;
+			bool hasinit;
+			/* side effects of a variably-modified typeof in the declaration specifiers */
+			struct expr *vm;
+		} decl;
+		struct {
+			struct expr *cond;
+			struct stmt *then, *els;
+			bool haselse;
+		} ifstmt;
+		struct {
+			struct expr *cond;
+			struct stmt *body;
+			/* case values seen while parsing, for detecting duplicates */
+			void *seen;
+			bool hasdefault;
+			/* filled in during lowering */
+			struct switchcases cases;
+		} switchstmt;
+		/* while, do, and for statements */
+		struct {
+			struct stmt *init;
+			struct expr *cond, *post;
+			struct stmt *body;
+		} loop;
+		/* case and default labels */
+		struct {
+			struct stmt *switchstmt;
+			unsigned long long value;
+		} label;
+		/* label and goto */
+		char *name;
+		/* break and continue */
+		struct stmt *target;
+	} u;
+};
+
+struct stmt *addstmt(struct stmt ***, enum stmtkind);
+void stmt(struct funcctx *, struct scope *, struct stmt ***);
+void delstmt(struct stmt *);
+
+/* lower */
+
+void lower(struct func *, struct stmt *);
 
 void switchcase(struct switchcases *, unsigned long long, struct block *);
 

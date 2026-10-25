@@ -43,9 +43,9 @@ mkscope(struct scope *parent)
 	s = xmalloc(sizeof(*s));
 	s->decls.len = 0;
 	s->tags.len = 0;
-	s->breaklabel = parent->breaklabel;
-	s->continuelabel = parent->continuelabel;
-	s->switchcases = parent->switchcases;
+	s->breakstmt = parent->breakstmt;
+	s->continuestmt = parent->continuestmt;
+	s->switchstmt = parent->switchstmt;
 	s->parent = parent;
 
 	return s;

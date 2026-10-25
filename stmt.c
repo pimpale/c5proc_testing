@@ -6,36 +6,62 @@
 #include "util.h"
 #include "cc.h"
 
+struct stmt *
+addstmt(struct stmt ***end, enum stmtkind kind)
+{
+	struct stmt *st;
+
+	st = xmalloc(sizeof(*st));
+	memset(st, 0, sizeof(*st));
+	st->kind = kind;
+	**end = st;
+	*end = &st->next;
+
+	return st;
+}
+
+struct caselabel {
+	struct treenode node;
+	struct stmt *stmt;
+};
+
 /* 6.8.1 Labeled statements */
 static bool
-label(struct func *f, struct scope *s)
+label(struct funcctx *fc, struct scope *s, struct stmt ***end)
 {
 	char *name;
-	struct gotolabel *g;
-	struct block *b;
+	struct stmt *st, *sw;
+	struct caselabel *c;
 	unsigned long long i;
 
 	attr(NULL, 0);
 	switch (tok.kind) {
 	case TCASE:
 		next();
-		if (!s->switchcases)
+		sw = s->switchstmt;
+		if (!sw)
 			error(&tok.loc, "'case' label must be in switch");
-		b = mkblock("switch_case");
-		funclabel(f, b);
 		i = intconstexpr(s, true);
-		switchcase(s->switchcases, i, b);
+		c = treeinsert(&sw->u.switchstmt.seen, i, sizeof(*c));
+		if (!c->node.new)
+			error(&tok.loc, "multiple 'case' labels with same value");
+		st = addstmt(end, STMTCASE);
+		c->stmt = st;
+		st->u.label.switchstmt = sw;
+		st->u.label.value = i;
 		expect(TCOLON, "after case expression");
 		break;
 	case TDEFAULT:
 		next();
-		if (!s->switchcases)
+		sw = s->switchstmt;
+		if (!sw)
 			error(&tok.loc, "'default' label must be in switch");
-		if (s->switchcases->defaultlabel)
+		if (sw->u.switchstmt.hasdefault)
 			error(&tok.loc, "multiple 'default' labels");
 		expect(TCOLON, "after 'default'");
-		s->switchcases->defaultlabel = mkblock("switch_default");
-		funclabel(f, s->switchcases->defaultlabel);
+		sw->u.switchstmt.hasdefault = true;
+		st = addstmt(end, STMTDEFAULT);
+		st->u.label.switchstmt = sw;
 		break;
 	default:
 		if (tok.kind < TIDENT)
@@ -43,42 +69,41 @@ label(struct func *f, struct scope *s)
 		name = tokenstr(tok.kind);
 		if (!peek(TCOLON))
 			return false;
-		g = funcgoto(f, name);
-		g->defined = true;
-		funclabel(f, g->label);
+		st = addstmt(end, STMTLABEL);
+		st->u.name = name;
 		break;
 	}
 	return true;
 }
 
 static void
-labelstmt(struct func *f, struct scope *s)
+labelstmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 {
-	while (label(f, s))
+	while (label(fc, s, end))
 		;
-	stmt(f, s);
+	stmt(fc, s, end);
 }
 
 /* 6.8 Statements and blocks */
 void
-stmt(struct func *f, struct scope *s)
+stmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 {
 	char *name;
 	struct expr *e;
 	struct type *t;
-	struct value *v;
-	struct block *b[4];
-	struct switchcases swtch;
+	struct stmt *st, **body;
 
 	attr(NULL, 0);
 	switch (tok.kind) {
 	/* 6.8.2 Compound statement */
 	case TLBRACE:
 		next();
+		st = addstmt(end, STMTCOMPOUND);
+		body = &st->u.compound;
 		s = mkscope(s);
 		while (tok.kind != TRBRACE) {
-			if (!label(f, s) && !decl(s, f))
-				stmt(f, s);
+			if (!label(fc, s, &body) && !decl(s, fc, &body))
+				stmt(fc, s, &body);
 		}
 		s = delscope(s);
 		next();
@@ -90,8 +115,8 @@ stmt(struct func *f, struct scope *s)
 		break;
 	default:
 		e = expr(s);
-		v = funcexpr(f, e);
-		delexpr(e);
+		st = addstmt(end, STMTEXPR);
+		st->u.expr = e;
 		expect(TSEMICOLON, "after expression statement");
 		break;
 
@@ -104,27 +129,21 @@ stmt(struct func *f, struct scope *s)
 		t = e->type;
 		if (!(t->prop & PROPSCALAR))
 			error(&tok.loc, "controlling expression of if statement must have scalar type");
-		b[0] = mkblock("if_true");
-		b[1] = mkblock("if_false");
-		funcbranch(f, e, b[0], b[1]);
-		delexpr(e);
 		expect(TRPAREN, "after expression");
+		st = addstmt(end, STMTIF);
+		st->u.ifstmt.cond = e;
 
-		funclabel(f, b[0]);
+		body = &st->u.ifstmt.then;
 		s = mkscope(s);
-		labelstmt(f, s);
+		labelstmt(fc, s, &body);
 		s = delscope(s);
 
 		if (consume(TELSE)) {
-			b[2] = mkblock("if_join");
-			funcjmp(f, b[2]);
-			funclabel(f, b[1]);
+			st->u.ifstmt.haselse = true;
+			body = &st->u.ifstmt.els;
 			s = mkscope(s);
-			labelstmt(f, s);
+			labelstmt(fc, s, &body);
 			s = delscope(s);
-			funclabel(f, b[2]);
-		} else {
-			funclabel(f, b[1]);
 		}
 		s = delscope(s);
 		break;
@@ -140,26 +159,14 @@ stmt(struct func *f, struct scope *s)
 			error(&tok.loc, "controlling expression of switch statement must have integer type");
 		e = exprpromote(e);
 
-		swtch.root = NULL;
-		swtch.type = e->type;
-		swtch.defaultlabel = NULL;
-
-		b[0] = mkblock("switch_cond");
-		b[1] = mkblock("switch_join");
-
-		v = funcexpr(f, e);
-		funcjmp(f, b[0]);
+		st = addstmt(end, STMTSWITCH);
+		st->u.switchstmt.cond = e;
+		body = &st->u.switchstmt.body;
 		s = mkscope(s);
-		s->breaklabel = b[1];
-		s->switchcases = &swtch;
-		labelstmt(f, s);
-		funcjmp(f, b[1]);
-
-		funclabel(f, b[0]);
-		funcswitch(f, v, &swtch, swtch.defaultlabel ? swtch.defaultlabel : b[1]);
+		s->breakstmt = st;
+		s->switchstmt = st;
+		labelstmt(fc, s, &body);
 		s = delscope(s);
-
-		funclabel(f, b[1]);
 		s = delscope(s);
 		break;
 
@@ -174,48 +181,37 @@ stmt(struct func *f, struct scope *s)
 			error(&tok.loc, "controlling expression of loop must have scalar type");
 		expect(TRPAREN, "after expression");
 
-		b[0] = mkblock("while_cond");
-		b[1] = mkblock("while_body");
-		b[2] = mkblock("while_join");
-
-		funclabel(f, b[0]);
-		funcbranch(f, e, b[1], b[2]);
-		funclabel(f, b[1]);
+		st = addstmt(end, STMTWHILE);
+		st->u.loop.cond = e;
+		body = &st->u.loop.body;
 		s = mkscope(s);
-		s->continuelabel = b[0];
-		s->breaklabel = b[2];
-		labelstmt(f, s);
+		s->continuestmt = st;
+		s->breakstmt = st;
+		labelstmt(fc, s, &body);
 		s = delscope(s);
-		funcjmp(f, b[0]);
-		funclabel(f, b[2]);
 		s = delscope(s);
 		break;
 	case TDO:
 		next();
 
-		b[0] = mkblock("do_body");
-		b[1] = mkblock("do_cond");
-		b[2] = mkblock("do_join");
-
+		st = addstmt(end, STMTDO);
+		body = &st->u.loop.body;
 		s = mkscope(s);
 		s = mkscope(s);
-		s->continuelabel = b[1];
-		s->breaklabel = b[2];
-		funclabel(f, b[0]);
-		labelstmt(f, s);
+		s->continuestmt = st;
+		s->breakstmt = st;
+		labelstmt(fc, s, &body);
 		s = delscope(s);
 
 		expect(TWHILE, "after 'do' statement");
 		expect(TLPAREN, "after 'while'");
-		funclabel(f, b[1]);
 		e = expr(s);
 		t = e->type;
 		if (!(t->prop & PROPSCALAR))
 			error(&tok.loc, "controlling expression of loop must have scalar type");
 		expect(TRPAREN, "after expression");
+		st->u.loop.cond = e;
 
-		funcbranch(f, e, b[0], b[2]);
-		funclabel(f, b[2]);
 		s = delscope(s);
 		expect(TSEMICOLON, "after 'do' statement");
 		break;
@@ -223,47 +219,31 @@ stmt(struct func *f, struct scope *s)
 		next();
 		expect(TLPAREN, "after 'for'");
 		s = mkscope(s);
-		if (!decl(s, f)) {
-			if (tok.kind != TSEMICOLON) {
-				e = expr(s);
-				funcexpr(f, e);
-				delexpr(e);
-			}
+		st = addstmt(end, STMTFOR);
+		body = &st->u.loop.init;
+		if (!decl(s, fc, &body)) {
+			if (tok.kind != TSEMICOLON)
+				addstmt(&body, STMTEXPR)->u.expr = expr(s);
 			expect(TSEMICOLON, NULL);
 		}
 
-		b[0] = mkblock("for_cond");
-		b[1] = mkblock("for_body");
-		b[2] = mkblock("for_cont");
-		b[3] = mkblock("for_join");
-
-		funclabel(f, b[0]);
 		if (tok.kind != TSEMICOLON) {
 			e = expr(s);
 			t = e->type;
 			if (!(t->prop & PROPSCALAR))
 				error(&tok.loc, "controlling expression of loop must have scalar type");
-			funcbranch(f, e, b[1], b[3]);
-			delexpr(e);
+			st->u.loop.cond = e;
 		}
 		expect(TSEMICOLON, NULL);
-		e = tok.kind == TRPAREN ? NULL : expr(s);
+		st->u.loop.post = tok.kind == TRPAREN ? NULL : expr(s);
 		expect(TRPAREN, NULL);
 
-		funclabel(f, b[1]);
+		body = &st->u.loop.body;
 		s = mkscope(s);
-		s->breaklabel = b[3];
-		s->continuelabel = b[2];
-		labelstmt(f, s);
+		s->breakstmt = st;
+		s->continuestmt = st;
+		labelstmt(fc, s, &body);
 		s = delscope(s);
-
-		funclabel(f, b[2]);
-		if (e) {
-			funcexpr(f, e);
-			delexpr(e);
-		}
-		funcjmp(f, b[0]);
-		funclabel(f, b[3]);
 		s = delscope(s);
 		break;
 
@@ -271,38 +251,83 @@ stmt(struct func *f, struct scope *s)
 	case TGOTO:
 		next();
 		name = expect(TIDENT, "after 'goto'");
-		funcjmp(f, funcgoto(f, name)->label);
+		st = addstmt(end, STMTGOTO);
+		st->u.name = name;
 		expect(TSEMICOLON, "after 'goto' statement");
 		break;
 	case TCONTINUE:
 		next();
-		if (!s->continuelabel)
+		if (!s->continuestmt)
 			error(&tok.loc, "'continue' statement must be in loop");
-		funcjmp(f, s->continuelabel);
+		st = addstmt(end, STMTCONTINUE);
+		st->u.target = s->continuestmt;
 		expect(TSEMICOLON, "after 'continue' statement");
 		break;
 	case TBREAK:
 		next();
-		if (!s->breaklabel)
+		if (!s->breakstmt)
 			error(&tok.loc, "'break' statement must be in loop or switch");
-		funcjmp(f, s->breaklabel);
+		st = addstmt(end, STMTBREAK);
+		st->u.target = s->breakstmt;
 		expect(TSEMICOLON, "after 'break' statement");
 		break;
 	case TRETURN:
 		next();
-		t = functype(f);
-		if (t->base != &typevoid) {
-			e = exprassign(expr(s), t->base);
-			v = funcexpr(f, e);
-			delexpr(e);
-		} else {
-			v = NULL;
-		}
-		funcret(f, v);
+		t = fc->type;
+		st = addstmt(end, STMTRETURN);
+		if (t->base != &typevoid)
+			st->u.expr = exprassign(expr(s), t->base);
 		expect(TSEMICOLON, "after 'return' statement");
 		break;
 
 	case T__ASM__:
 		error(&tok.loc, "inline assembly is not yet supported");
 	}
+}
+
+static void
+delstmts(struct stmt *st)
+{
+	struct stmt *next;
+
+	for (; st; st = next) {
+		next = st->next;
+		delstmt(st);
+	}
+}
+
+void
+delstmt(struct stmt *st)
+{
+	switch (st->kind) {
+	case STMTCOMPOUND:
+		delstmts(st->u.compound);
+		break;
+	case STMTEXPR:
+		delexpr(st->u.expr);
+		break;
+	case STMTIF:
+		delexpr(st->u.ifstmt.cond);
+		delstmts(st->u.ifstmt.then);
+		delstmts(st->u.ifstmt.els);
+		break;
+	case STMTSWITCH:
+		delstmts(st->u.switchstmt.body);
+		break;
+	case STMTWHILE:
+	case STMTDO:
+	case STMTFOR:
+		delstmts(st->u.loop.init);
+		if (st->kind == STMTFOR && st->u.loop.cond)
+			delexpr(st->u.loop.cond);
+		if (st->u.loop.post)
+			delexpr(st->u.loop.post);
+		delstmts(st->u.loop.body);
+		break;
+	case STMTRETURN:
+		if (st->u.expr)
+			delexpr(st->u.expr);
+		break;
+	}
+	free(st);
 }

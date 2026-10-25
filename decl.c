@@ -1001,21 +1001,32 @@ declcommon(struct scope *s, enum declkind kind, char *name, char *asmname, struc
 }
 
 static void
-defineobj(struct decl *d, struct init *init, bool hasinit, struct func *f)
+defineobj(struct decl *d, struct init *init, bool hasinit, struct stmt ***end)
 {
+	struct stmt *st;
+
 	if (d->type->incomplete)
 		error(&tok.loc, "object '%s' has incomplete type", d->name);
 	if (d->u.obj.align < d->type->align)
 		d->u.obj.align = d->type->align;
-	if (d->u.obj.storage == SDAUTO)
-		funcinit(f, d, init, hasinit);
-	else
+	if (d->u.obj.storage == SDAUTO) {
+		st = addstmt(end, STMTDECL);
+		st->u.decl.decl = d;
+		st->u.decl.init = init;
+		st->u.decl.hasinit = hasinit;
+	} else {
 		emitdata(d, init);
+	}
 	d->defined = true;
 }
 
+/*
+Parse a declaration. At block scope, `fc` is the function being
+defined, and statements initializing automatic objects are added to
+`end`.
+*/
 bool
-decl(struct scope *s, struct func *f)
+decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 {
 	struct qualtype base, qt;
 	struct type *t;
@@ -1026,10 +1037,13 @@ decl(struct scope *s, struct func *f)
 	struct init *init;
 	bool hasinit;
 	char *name, *asmname;
-	int allowfunc = !f;
+	int allowfunc = !fc;
 	struct decl *d, *prior;
 	enum declkind kind;
 	struct scope *funcscope;
+	struct funcctx bodyctx;
+	struct func *f;
+	struct stmt *body, **bodyend;
 	int align;
 
 	if (staticassert(s))
@@ -1040,7 +1054,7 @@ decl(struct scope *s, struct func *f)
 	base = declspecs(s, &sc, &fs, &align);
 	if (!base.type)
 		return false;
-	if (f) {
+	if (fc) {
 		if (sc == SCTHREADLOCAL)
 			error(&tok.loc, "block scope declaration containing 'thread_local' must contain 'static' or 'extern'");
 	} else {
@@ -1102,11 +1116,11 @@ decl(struct scope *s, struct func *f)
 			}
 
 			if (base.expr)
-				funcexpr(f, base.expr);
+				addstmt(end, STMTDECL)->u.decl.vm = base.expr;
 			init = NULL;
 			hasinit = false;
 			if (consume(TASSIGN)) {
-				if (f && d->linkage != LINKNONE)
+				if (fc && d->linkage != LINKNONE)
 					error(&tok.loc, "object '%s' with block scope and %s linkage cannot have initializer", name, d->linkage == LINKEXTERN ? "external" : "internal");
 				if (d->defined)
 					error(&tok.loc, "object '%s' redefined", name);
@@ -1122,12 +1136,12 @@ decl(struct scope *s, struct func *f)
 				}
 				break;
 			}
-			defineobj(d, init, hasinit, f);
+			defineobj(d, init, hasinit, end);
 			break;
 		case DECLFUNC:
 			if (align)
 				error(&tok.loc, "function '%s' declared with alignment specifier", name);
-			if (f && sc && sc != SCEXTERN)  /* 6.7.1p7 */
+			if (fc && sc && sc != SCEXTERN)  /* 6.7.1p7 */
 				error(&tok.loc, "function '%s' with block scope may only have storage class 'extern'", name);
 			d = declcommon(s, kind, name, asmname, t, tq, sc, prior);
 			d->value = mkglobal(d);
@@ -1142,7 +1156,12 @@ decl(struct scope *s, struct func *f)
 				assert(funcscope);
 				s = funcscope;
 				f = mkfunc(d, name, t, s);
-				stmt(f, s);
+				bodyctx.type = t;
+				body = NULL;
+				bodyend = &body;
+				stmt(&bodyctx, s, &bodyend);
+				lower(f, body);
+				delstmt(body);
 				if (d->u.func.isnoreturn)
 					funchlt(f);
 				/* XXX: need to keep track of function in case a later declaration specifies extern */

@@ -57,7 +57,7 @@ main(int argc, char *argv[])
 	} else {
 		scopeinit();
 		while (tok.kind != TEOF) {
-			if (!decl(&filescope, NULL)) {
+			if (!decl(&filescope, NULL, NULL)) {
 				if (tok.kind == TSEMICOLON)
 					error(&tok.loc, "unexpected ';' at top-level");
 				error(&tok.loc, "expected declaration or function definition");

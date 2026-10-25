@@ -277,7 +277,7 @@ C5 supports both C style null terminated strings and Pascal style strings with a
 C5 supports two new prefixes before strings:
 * `p"`: pascal style. No null terminator.
 * `c"`: c style, with a null terminator.
-Both of these can be combined with other prefixes, eg `pL`, or `cu8`.
+Both of these can be combined with other prefixes, eg `pL`, or `cu8`. The p or c must come before the other encoding flags.
 
 It also supports a new prefix:
 * `n"`: native encoding. This is the default in C, unless some prefix is applied.
@@ -291,10 +291,10 @@ Additionally, in C-incompatible mode, all strings (both pascal and c) are in UTF
 // c compatible mode
 char x[2] = "a";
 // c incompatible mode
-array<char8_t, 1> x = "a";
+array<unsigned char, 1> x = "a";
 ```
 
-One footgun here is that in C-incompatible mode, things like `puts("hi")` will read past the end of the string, since there is no null terminator. It is necessary to prefix them: `puts(nc"hi")`. It is generally recommended to use the C5 standard library primitives instead.
+One footgun here is that in C-incompatible mode, things like `puts("hi")` will read past the end of the string (although it can warn or error due to the encoding mismatch), since there is no null terminator. It is necessary to prefix them: `puts(cn"hi")`. It is generally recommended to use the C5 standard library primitives instead.
 
 ### Destructuring and extending switch
 We introduce destructuring syntax for variable assignments and switches.
@@ -480,7 +480,7 @@ Suppose we have a call `f<template_args>(args, .overrides=overrides)`. Then:
     * There is no backtracking.
 
 
-In a template or generic context, the inference proceeds treating the type parameters as an opaque object. It only happens once per definition, not once per instantiation.
+In a template or generic context, the inference proceeds treating the type parameters as an opaque type. It only happens once per definition, not once per instantiation.
 
 ### Linking
 Each instantiation of a template function or variable is a single entity across the program.

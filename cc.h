@@ -276,6 +276,8 @@ enum exprkind {
 	EXPRSIZEOF,
 	/* size, alignment, or member offset of a type depending on mono parameters */
 	EXPRLAYOUT,
+	/* value of a size parameter */
+	EXPRSIZEPARAM,
 };
 
 enum layoutkind {
@@ -352,6 +354,10 @@ struct expr {
 			struct type *type;
 			char *member;
 		} layout;
+		struct {
+			struct generic *gen;
+			size_t index;
+		} sizeparam;
 		struct value *temp;
 	} u;
 };
@@ -446,9 +452,15 @@ extern struct type *typeadjvalist;
 
 /* generic */
 
+enum genparamkind {
+	GENTYPE,
+	GENSIZE,
+};
+
 struct genparam {
+	enum genparamkind kind;
 	char *name;
-	/* TYPEPARAM type for the parameter */
+	/* TYPEPARAM type for a type parameter */
 	struct type *type;
 };
 
@@ -469,6 +481,8 @@ struct generic {
 struct genarg {
 	struct type *type;
 	enum typequal qual;
+	/* integer constant expression for a size parameter */
+	struct expr *size;
 };
 
 struct generic *mkgeneric(bool);
@@ -483,6 +497,9 @@ struct type *geninst(struct generic *, struct genarg *, enum typequal *);
 bool genunify(struct generic *, struct genarg *, struct type *, enum typequal, struct type *, enum typequal);
 struct genarg *genargs(struct scope *, struct generic *, bool);
 struct genarg *genidentity(struct generic *);
+struct expr *mksizeparamexpr(struct generic *, size_t);
+bool sizesame(struct expr *, struct expr *);
+bool argssame(struct generic *, struct genarg *, struct genarg *);
 void closeangle(void);
 
 /* mono */
@@ -560,6 +577,10 @@ struct expr *assignexpr(struct scope *);
 struct expr *condexpr(struct scope *);
 unsigned long long intconstexpr(struct scope *, bool);
 bool exprdep(struct expr *);
+bool exprhasparam(struct expr *, struct generic *);
+bool exprhasparamkind(struct expr *, bool);
+struct expr *sizeargexpr(struct scope *);
+extern bool allowerasedsize;
 void delexpr(struct expr *);
 
 struct expr *exprassign(struct expr *, struct type *);

@@ -1,0 +1,2 @@
+mono forall<type T> unsigned long sz(void) { return sizeof(T); }
+unsigned long g(void) { return sz(); }

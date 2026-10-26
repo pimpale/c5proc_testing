@@ -118,18 +118,6 @@ struct copy {
 	struct ptrmap decls, exprs, stmts;
 };
 
-static bool
-argssame(struct generic *g, struct genarg *a1, struct genarg *a2)
-{
-	size_t i;
-
-	for (i = 0; i < g->nparam; ++i) {
-		if (a1[i].qual != a2[i].qual || !typesame(a1[i].type, a2[i].type))
-			return false;
-	}
-	return true;
-}
-
 /* the instance of the mono function d for the arguments `args` */
 struct decl *
 monoinst(struct decl *d, struct genarg *args)
@@ -301,6 +289,11 @@ copyexpr(struct copy *c, struct expr *e)
 	n = ptrget(&c->exprs, e);
 	if (n)
 		return n;
+	if (e->kind == EXPRSIZEPARAM && e->u.sizeparam.gen == c->gen) {
+		n = c->args[e->u.sizeparam.index].size;
+		ptrput(&c->exprs, e, n);
+		return n;
+	}
 	if (e->kind == EXPRLAYOUT && !typedep(copytypeonly(c, e->u.layout.type))) {
 		n = copylayout(c, e);
 		ptrput(&c->exprs, e, n);
@@ -323,7 +316,12 @@ copyexpr(struct copy *c, struct expr *e)
 			args = xreallocarray(NULL, d->gen->nparam, sizeof(*args));
 			for (i = 0; i < d->gen->nparam; ++i) {
 				args[i].qual = e->u.ident.genargs[i].qual;
-				args[i].type = copytype(c, e->u.ident.genargs[i].type, &args[i].qual);
+				args[i].type = NULL;
+				args[i].size = NULL;
+				if (e->u.ident.genargs[i].type)
+					args[i].type = copytype(c, e->u.ident.genargs[i].type, &args[i].qual);
+				else
+					args[i].size = eval(copyexpr(c, e->u.ident.genargs[i].size));
 			}
 			n->u.ident.genargs = args;
 			if (d->gen->ismono)
@@ -368,6 +366,9 @@ copyexpr(struct copy *c, struct expr *e)
 	case EXPRSIZEOF:
 		q = QUALNONE;
 		n->u.szof.type = copytype(c, e->u.szof.type, &q);
+		break;
+	case EXPRSIZEPARAM:
+		/* a size parameter of another declaration */
 		break;
 	case EXPRLAYOUT:
 		/* the type still depends on other mono parameters */

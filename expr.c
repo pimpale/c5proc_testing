@@ -719,6 +719,7 @@ generic(struct scope *s)
 
 /* 6.5 Expressions */
 static void genref(struct scope *, struct expr *);
+static struct expr *binaryexpr(struct scope *, struct expr *, int);
 static void genbind(struct expr *, struct genarg *);
 
 static struct expr *
@@ -826,6 +827,14 @@ primaryexpr(struct scope *s)
 			d = scopegetdecl(s, tokenstr(tok.kind), 1);
 			if (!d)
 				error(&tok.loc, "undeclared identifier: %s", tokenstr(tok.kind));
+			if (d->kind == DECLCONST && d->gen) {
+				/* size parameter */
+				if (!d->gen->ismono && !allowerasedsize)
+					error(&tok.loc, "size parameter '%s' of an erased declaration can only be used in array lengths", d->name);
+				e = mksizeparamexpr(d->gen, d->u.enumconst);
+				next();
+				break;
+			}
 			e = mkexpr(EXPRIDENT, d->type, NULL);
 			e->qual = d->qual;
 			e->lvalue = d->kind == DECLOBJECT;
@@ -867,7 +876,7 @@ genref(struct scope *s, struct expr *e)
 		args = genargs(s, d->gen, true);
 		e->u.ident.genargs = args;
 		for (i = 0; i < d->gen->nparam; ++i) {
-			if (!args[i].type)
+			if (!args[i].type && !args[i].size)
 				break;
 		}
 		if (i == d->gen->nparam) {
@@ -902,6 +911,21 @@ genbind(struct expr *e, struct genarg *args)
 		error(&tok.loc, "mono %s '%s' cannot be instantiated with erased type parameters", d->kind == DECLFUNC ? "function" : "variable", d->name);
 	if (!argshaveparam(d->gen, args, true))
 		e->u.ident.decl = monoinst(d, args);
+}
+
+/* whether all arguments for g are known */
+static bool
+argscomplete(struct generic *g, struct genarg *args)
+{
+	size_t i;
+
+	if (!args)
+		return false;
+	for (i = 0; i < g->nparam; ++i) {
+		if (!args[i].type && !args[i].size)
+			return false;
+	}
+	return true;
 }
 
 /*
@@ -940,8 +964,8 @@ geninfer(struct scope *s, struct expr *r, struct expr **args)
 			error(&tok.loc, "cannot infer type arguments of '%s' from argument %zu", d->name, i);
 	}
 	for (i = 0; i < g->nparam; ++i) {
-		if (!bind[i].type)
-			error(&tok.loc, "cannot infer type parameter '%s' of '%s'", g->params[i].name, d->name);
+		if (!bind[i].type && !bind[i].size)
+			error(&tok.loc, "cannot infer %s parameter '%s' of '%s'", g->params[i].kind == GENSIZE ? "size" : "type", g->params[i].name, d->name);
 	}
 	genbind(r->base, bind);
 	r->type = mkpointertype(r->base->type, QUALNONE);
@@ -1148,7 +1172,7 @@ postfixexpr(struct scope *s, struct expr *r)
 			if (r->type->kind != TYPEPOINTER || r->type->base->kind != TYPEFUNC)
 				error(&tok.loc, "called object is not a function");
 			args = NULL;
-			if (r->decayed && r->base->kind == EXPRIDENT && r->base->u.ident.decl->gen && typehasparam(r->type->base, r->base->u.ident.decl->gen))
+			if (r->decayed && r->base->kind == EXPRIDENT && r->base->u.ident.decl->gen && !argscomplete(r->base->u.ident.decl->gen, r->base->u.ident.genargs))
 				geninfer(s, r, &args);
 			t = r->type->base;
 			e = mkexpr(EXPRCALL, t->base, r);
@@ -1491,7 +1515,10 @@ condexpr(struct scope *s)
 	return e;
 }
 
-/* whether e depends on the layout of types depending on mono parameters */
+/* whether size parameters of erased declarations may be used, as in array lengths */
+bool allowerasedsize;
+
+/* whether the value of e depends on mono or erased parameters, so is not yet known */
 bool
 exprdep(struct expr *e)
 {
@@ -1501,6 +1528,7 @@ exprdep(struct expr *e)
 		return false;
 	switch (e->kind) {
 	case EXPRLAYOUT:
+	case EXPRSIZEPARAM:
 		return true;
 	case EXPRBINARY:
 		return exprdep(e->u.binary.l) || exprdep(e->u.binary.r);
@@ -1517,6 +1545,87 @@ exprdep(struct expr *e)
 		return exprdep(e->base);
 	}
 	return false;
+}
+
+/* whether e refers to a parameter of g, or of any declaration if g is NULL */
+bool
+exprhasparam(struct expr *e, struct generic *g)
+{
+	struct expr *sub;
+
+	if (!e)
+		return false;
+	switch (e->kind) {
+	case EXPRSIZEPARAM:
+		return !g || e->u.sizeparam.gen == g;
+	case EXPRLAYOUT:
+		return typehasparam(e->u.layout.type, g);
+	case EXPRBINARY:
+		return exprhasparam(e->u.binary.l, g) || exprhasparam(e->u.binary.r, g);
+	case EXPRCOND:
+		return exprhasparam(e->base, g) || exprhasparam(e->u.cond.t, g) || exprhasparam(e->u.cond.f, g);
+	case EXPRCOMMA:
+		for (sub = e->base; sub; sub = sub->next) {
+			if (exprhasparam(sub, g))
+				return true;
+		}
+		return false;
+	case EXPRUNARY:
+	case EXPRCAST:
+		return exprhasparam(e->base, g);
+	}
+	return false;
+}
+
+/* whether e refers to a parameter of a mono (or erased) declaration */
+bool
+exprhasparamkind(struct expr *e, bool mono)
+{
+	struct expr *sub;
+
+	if (!e)
+		return false;
+	switch (e->kind) {
+	case EXPRSIZEPARAM:
+		return e->u.sizeparam.gen->ismono == mono;
+	case EXPRLAYOUT:
+		return mono || typehasparamkind(e->u.layout.type, mono);
+	case EXPRBINARY:
+		return exprhasparamkind(e->u.binary.l, mono) || exprhasparamkind(e->u.binary.r, mono);
+	case EXPRCOND:
+		return exprhasparamkind(e->base, mono) || exprhasparamkind(e->u.cond.t, mono) || exprhasparamkind(e->u.cond.f, mono);
+	case EXPRCOMMA:
+		for (sub = e->base; sub; sub = sub->next) {
+			if (exprhasparamkind(sub, mono))
+				return true;
+		}
+		return false;
+	case EXPRUNARY:
+	case EXPRCAST:
+		return exprhasparamkind(e->base, mono);
+	}
+	return false;
+}
+
+/*
+Parse the argument for a size parameter. It may not contain a top-level
+relational, equality, or bitwise operator, so that the '>' closing the
+argument list is not taken as part of it.
+*/
+struct expr *
+sizeargexpr(struct scope *s)
+{
+	struct expr *e;
+
+	e = eval(binaryexpr(s, NULL, 7));
+	if (!(e->type->prop & PROPINT))
+		error(&tok.loc, "size argument must have integer type");
+	if (e->kind != EXPRCONST && !exprdep(e))
+		error(&tok.loc, "size argument must be an integer constant expression");
+	if (e->kind == EXPRCONST && e->type->u.arith.issigned && e->u.constant.u >> 63)
+		error(&tok.loc, "size argument cannot be negative");
+	/* fold the conversion, so that equal sizes compare equal */
+	return eval(exprconvert(e, &typeulong));
 }
 
 unsigned long long

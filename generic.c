@@ -74,7 +74,7 @@ typehasparam(struct type *t, struct generic *g)
 		if (!tg)
 			break;
 		for (i = 0; i < tg->nparam; ++i) {
-			if (typehasparam(t->u.structunion.genargs[i].type, g))
+			if (t->u.structunion.genargs[i].type ? typehasparam(t->u.structunion.genargs[i].type, g) : exprhasparam(t->u.structunion.genargs[i].size, g))
 				return true;
 		}
 		break;
@@ -93,7 +93,7 @@ typehasparamkind(struct type *t, bool mono)
 	case TYPEPARAM:
 		return t->u.param.gen->ismono == mono;
 	case TYPEARRAY:
-		if (t->prop & PROPDEPLEN && mono)
+		if (t->prop & PROPDEPLEN && exprhasparamkind(t->u.array.length, mono))
 			return true;
 		/* fallthrough */
 	case TYPEPOINTER:
@@ -122,7 +122,7 @@ argshaveparam(struct generic *g, struct genarg *args, bool mono)
 	size_t i;
 
 	for (i = 0; i < g->nparam; ++i) {
-		if (typehasparamkind(args[i].type, mono))
+		if (args[i].type ? typehasparamkind(args[i].type, mono) : exprhasparamkind(args[i].size, mono))
 			return true;
 	}
 	return false;
@@ -138,7 +138,7 @@ typedep(struct type *t)
 	case TYPEPARAM:
 		return t->u.param.gen->ismono;
 	case TYPEARRAY:
-		return t->prop & PROPDEPLEN || typedep(t->base);
+		return t->prop & PROPDEPLEN && !t->incomplete || typedep(t->base);
 	case TYPESTRUCT:
 	case TYPEUNION:
 		tg = t->u.structunion.gen;
@@ -178,9 +178,9 @@ typesubst(struct type *t, enum typequal *tq, struct generic *g, struct genarg *a
 		if (t->prop & PROPDEPLEN) {
 			len = constsubst(t->u.array.length, g, args);
 			if (len->kind != EXPRCONST) {
-				/* still depends on other mono parameters */
+				/* still depends on other parameters */
 				n = mkarraytype(n, q, 0);
-				n->incomplete = false;
+				n->incomplete = exprhasparamkind(len, false);
 				n->prop |= PROPDEPLEN;
 				n->u.array.length = len;
 				return n;
@@ -225,8 +225,16 @@ typesubst(struct type *t, enum typequal *tq, struct generic *g, struct genarg *a
 		tg = t->u.structunion.gen;
 		newargs = xreallocarray(NULL, tg->nparam, sizeof(*newargs));
 		for (i = 0; i < tg->nparam; ++i) {
+			newargs[i].size = NULL;
+			newargs[i].type = NULL;
 			q = t->u.structunion.genargs[i].qual;
-			newargs[i].type = typesubst(t->u.structunion.genargs[i].type, &q, g, args);
+			if (t->u.structunion.genargs[i].type) {
+				newargs[i].type = typesubst(t->u.structunion.genargs[i].type, &q, g, args);
+			} else {
+				newargs[i].size = t->u.structunion.genargs[i].size;
+				if (exprhasparam(newargs[i].size, g))
+					newargs[i].size = constsubst(newargs[i].size, g, args);
+			}
 			newargs[i].qual = q;
 		}
 		return geninst(tg, newargs, tq);
@@ -235,16 +243,58 @@ typesubst(struct type *t, enum typequal *tq, struct generic *g, struct genarg *a
 	return NULL;
 }
 
-static bool
+/* whether two size arguments are the same; dependent ones are compared structurally */
+bool
+sizesame(struct expr *e1, struct expr *e2)
+{
+	if (e1 == e2)
+		return true;
+	if (e1->kind != e2->kind)
+		return false;
+	switch (e1->kind) {
+	case EXPRCONST:
+		return e1->u.constant.u == e2->u.constant.u;
+	case EXPRSIZEPARAM:
+		return e1->u.sizeparam.gen == e2->u.sizeparam.gen && e1->u.sizeparam.index == e2->u.sizeparam.index;
+	case EXPRBINARY:
+		return e1->op == e2->op && sizesame(e1->u.binary.l, e2->u.binary.l) && sizesame(e1->u.binary.r, e2->u.binary.r);
+	case EXPRCAST:
+		return e1->type == e2->type && sizesame(e1->base, e2->base);
+	case EXPRLAYOUT:
+		return e1->u.layout.kind == e2->u.layout.kind && typesame(e1->u.layout.type, e2->u.layout.type);
+	}
+	return false;
+}
+
+bool
 argssame(struct generic *g, struct genarg *a1, struct genarg *a2)
 {
 	size_t i;
 
 	for (i = 0; i < g->nparam; ++i) {
-		if (a1[i].qual != a2[i].qual || !typesame(a1[i].type, a2[i].type))
+		if (g->params[i].kind == GENSIZE) {
+			if (!sizesame(a1[i].size, a2[i].size))
+				return false;
+		} else if (a1[i].qual != a2[i].qual || !typesame(a1[i].type, a2[i].type)) {
 			return false;
+		}
 	}
 	return true;
+}
+
+/* expression for the value of size parameter i of g */
+struct expr *
+mksizeparamexpr(struct generic *g, size_t i)
+{
+	struct expr *e;
+
+	e = xmalloc(sizeof(*e));
+	memset(e, 0, sizeof(*e));
+	e->kind = EXPRSIZEPARAM;
+	e->type = &typeulong;
+	e->u.sizeparam.gen = g;
+	e->u.sizeparam.index = i;
+	return e;
 }
 
 /*
@@ -262,8 +312,12 @@ geninst(struct generic *g, struct genarg *args, enum typequal *tq)
 
 	p = g->pattern;
 	for (i = 0; i < g->nparam; ++i) {
-		if (args[i].type != g->params[i].type || args[i].qual)
+		if (g->params[i].kind == GENSIZE) {
+			if (args[i].size->kind != EXPRSIZEPARAM || args[i].size->u.sizeparam.gen != g || args[i].size->u.sizeparam.index != i)
+				break;
+		} else if (args[i].type != g->params[i].type || args[i].qual) {
 			break;
+		}
 	}
 	if (i == g->nparam)
 		return p;
@@ -321,6 +375,35 @@ geninst(struct generic *g, struct genarg *args, enum typequal *tq)
 }
 
 
+static struct expr *
+mkconstsize(unsigned long long n)
+{
+	struct expr *e;
+
+	e = xmalloc(sizeof(*e));
+	memset(e, 0, sizeof(*e));
+	e->kind = EXPRCONST;
+	e->type = &typeulong;
+	e->u.constant.u = n;
+	return e;
+}
+
+/* unify a size in a parameter type with a size in an argument type */
+static bool
+unifysize(struct generic *g, struct genarg *bind, struct expr *p, struct expr *a)
+{
+	struct genarg *b;
+
+	if (p->kind != EXPRSIZEPARAM || p->u.sizeparam.gen != g)
+		return !exprhasparam(p, g) || sizesame(p, a);
+	b = &bind[p->u.sizeparam.index];
+	if (!b->size) {
+		b->size = a;
+		return true;
+	}
+	return sizesame(b->size, a);
+}
+
 /*
 Unify the parameter type p with the argument type a, binding the
 parameters of g in `bind`. Parts of p that do not refer to parameters
@@ -357,6 +440,12 @@ genunify(struct generic *g, struct genarg *bind, struct type *p, enum typequal p
 	case TYPEARRAY:
 		if (a->kind != TYPEARRAY)
 			return false;
+		if (p->prop & PROPDEPLEN && p->u.array.length->kind == EXPRSIZEPARAM && p->u.array.length->u.sizeparam.gen == g) {
+			if (a->incomplete || a->prop & (PROPVM | PROPDEPLEN) || !a->base->size)
+				return false;
+			if (!unifysize(g, bind, p->u.array.length, mkconstsize(a->size / a->base->size)))
+				return false;
+		}
 		return genunify(g, bind, p->base, p->qual, a->base, a->qual);
 	case TYPEFUNC:
 		if (a->kind != TYPEFUNC || a->u.func.isvararg != p->u.func.isvararg)
@@ -375,8 +464,12 @@ genunify(struct generic *g, struct genarg *bind, struct type *p, enum typequal p
 		pargs = p->u.structunion.genargs;
 		aargs = a->u.structunion.genargs;
 		for (i = 0; i < p->u.structunion.gen->nparam; ++i) {
-			if (!genunify(g, bind, pargs[i].type, pargs[i].qual, aargs[i].type, aargs[i].qual))
+			if (!pargs[i].type) {
+				if (!unifysize(g, bind, pargs[i].size, aargs[i].size))
+					return false;
+			} else if (!genunify(g, bind, pargs[i].type, pargs[i].qual, aargs[i].type, aargs[i].qual)) {
 				return false;
+			}
 		}
 		return true;
 	}
@@ -394,6 +487,7 @@ genidentity(struct generic *g)
 	for (i = 0; i < g->nparam; ++i) {
 		args[i].type = g->params[i].type;
 		args[i].qual = QUALNONE;
+		args[i].size = g->params[i].kind == GENSIZE ? mksizeparamexpr(g, i) : NULL;
 	}
 	return args;
 }
@@ -428,9 +522,13 @@ genargs(struct scope *s, struct generic *g, bool allowauto)
 				error(&tok.loc, "too few type arguments");
 			expect(TCOMMA, "between type arguments");
 		}
-		if (allowauto && consume(TAUTO)) {
-			args[i].type = NULL;
-			args[i].qual = QUALNONE;
+		args[i].type = NULL;
+		args[i].qual = QUALNONE;
+		args[i].size = NULL;
+		if (allowauto && consume(TAUTO))
+			continue;
+		if (g->params[i].kind == GENSIZE) {
+			args[i].size = sizeargexpr(s);
 			continue;
 		}
 		q = QUALNONE;
@@ -459,10 +557,23 @@ argsstr(struct array *buf, struct generic *g, struct genarg *args)
 {
 	size_t i;
 
+	char num[32];
+
 	addstr(buf, "<");
 	for (i = 0; i < g->nparam; ++i) {
 		if (i > 0)
 			addstr(buf, ", ");
+		if (g->params[i].kind == GENSIZE) {
+			if (args[i].size->kind == EXPRCONST) {
+				snprintf(num, sizeof(num), "%llu", args[i].size->u.constant.u);
+				addstr(buf, num);
+			} else if (args[i].size->kind == EXPRSIZEPARAM) {
+				addstr(buf, args[i].size->u.sizeparam.gen->params[args[i].size->u.sizeparam.index].name);
+			} else {
+				addstr(buf, "?");
+			}
+			continue;
+		}
 		typestr(buf, args[i].type, args[i].qual, "");
 	}
 	addstr(buf, ">");

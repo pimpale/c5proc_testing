@@ -1,0 +1,2 @@
+error: static assertion failed: N must be positive
+note: in instantiation of 'f<0>'

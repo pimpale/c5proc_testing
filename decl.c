@@ -714,7 +714,9 @@ declaratortypes(struct scope *s, struct list *result, char **name, int *align, s
 				t->prop |= PROPVM;
 				t->incomplete = false;
 			} else if (!consume(TRBRACK)) {
+				allowerasedsize = true;
 				e = assignexpr(s);
+				allowerasedsize = false;
 				if (!(e->type->prop & PROPINT))
 					error(&tok.loc, "array length expression must have integer type");
 				t->u.array.length = e;
@@ -789,9 +791,11 @@ declarator(struct scope *s, struct qualtype base, char **name, int *align, struc
 						error(&tok.loc, "array length must be non-negative");
 					t->u.array.length = e;
 				} else if (exprdep(e)) {
-					/* the length is computed for each instance */
+					/* the length is computed for each instance, or never known if it is erased */
 					t->prop |= PROPDEPLEN;
 					t->u.array.length = e;
+					if (exprhasparamkind(e, false))
+						t->incomplete = true;
 				} else if (e->kind == EXPRCONST && base.type->size) {
 					if (e->type->u.arith.issigned && e->u.constant.u >> 63)
 						error(&tok.loc, "array length must be non-negative");
@@ -1166,6 +1170,7 @@ genparams(struct scope *s)
 	struct generic *g;
 	struct array params = {0};
 	struct genparam *p;
+	struct decl *d;
 	bool ismono;
 	size_t i, j;
 
@@ -1179,13 +1184,14 @@ genparams(struct scope *s)
 	g = mkgeneric(ismono);
 	expect(TLESS, "after 'forall'");
 	do {
-		if (tok.kind == C5_SIZE || tok.kind == C5_CONSTNESS)
-			error(&tok.loc, "'%s' parameters are not yet implemented", tokenstr(tok.kind));
-		if (tok.kind != C5_TYPE)
+		if (tok.kind == C5_CONSTNESS)
+			error(&tok.loc, "'constness' parameters are not yet implemented");
+		if (tok.kind != C5_TYPE && tok.kind != C5_SIZE)
 			error(&tok.loc, "expected 'type', 'size', or 'constness' in forall parameter list");
-		next();
 		p = arrayadd(&params, sizeof(*p));
-		p->name = expect(TIDENT, "after 'type'");
+		p->kind = tok.kind == C5_SIZE ? GENSIZE : GENTYPE;
+		next();
+		p->name = expect(TIDENT, "after parameter kind");
 		p->type = NULL;
 	} while (consume(TCOMMA));
 	closeangle();
@@ -1196,6 +1202,14 @@ genparams(struct scope *s)
 		for (j = 0; j < i; ++j) {
 			if (strcmp(g->params[j].name, p->name) == 0)
 				error(&tok.loc, "duplicate forall parameter '%s'", p->name);
+		}
+		if (p->kind == GENSIZE) {
+			/* a size parameter is a constant of type size_t */
+			d = mkdecl(p->name, DECLCONST, &typeulong, QUALNONE, LINKNONE);
+			d->gen = g;
+			d->u.enumconst = i;
+			scopeputdecl(s, d);
+			continue;
 		}
 		p->type = mkparamtype(g, i, p->name);
 		scopeputdecl(s, mkdecl(p->name, DECLTYPE, p->type, QUALNONE, LINKNONE));

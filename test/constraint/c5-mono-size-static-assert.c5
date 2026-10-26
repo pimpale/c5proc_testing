@@ -1,0 +1,2 @@
+mono forall<size N> unsigned long f(void) { _Static_assert(N > 0, "N must be positive"); return N; }
+unsigned long g(void) { return f<0>(); }

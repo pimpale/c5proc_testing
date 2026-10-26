@@ -1,0 +1,1 @@
+forall<size N> unsigned long f(int (*a)[N]) { return N; }

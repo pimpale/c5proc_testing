@@ -1,0 +1,2 @@
+mono forall<size N> unsigned long f(void) { return N; }
+unsigned long g(void) { return f<-1>(); }

@@ -1,0 +1,1 @@
+error: size parameter 'N' of an erased declaration can only be used in array lengths

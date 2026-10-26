@@ -1,0 +1,1 @@
+error: initializer is inconsistent with the existential parameters of struct 'A'

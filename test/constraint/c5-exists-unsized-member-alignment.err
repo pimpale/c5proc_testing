@@ -1,0 +1,1 @@
+error: member 'state' with existential type must be in a struct and have an alignment specifier

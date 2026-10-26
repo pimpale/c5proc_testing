@@ -1,1 +1,1 @@
-error: expected 'forall' after 'mono' or 'erased'
+error: expected 'forall' or 'exists' after 'mono' or 'erased'

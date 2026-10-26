@@ -1,0 +1,59 @@
+type :Allocator.1 = { l, l, }
+export
+function :Allocator.1 $get_bump() {
+@start.1
+	%.1 =l alloc8 16
+@body.2
+	storel extern $bump, %.1
+	%.2 =l add %.1, 8
+	storel extern $bump_alloc, %.2
+	ret %.1
+}
+export
+function l $alloc_via(l %.1, l %.3) {
+@start.3
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+@body.4
+	%.5 =l loadl %.2
+	%.6 =l add %.5, 0
+	%.7 =l loadl %.6
+	%.8 =l loadl %.4
+	%.9 =l loadl %.2
+	%.10 =l add %.9, 8
+	%.11 =l loadl %.10
+	%.12 =l call %.11(l %.7, l %.8)
+	ret %.12
+}
+export
+function l $f() {
+@start.5
+	%.1 =l alloc8 16
+	%.7 =l alloc8 8
+@body.6
+	%.2 =:Allocator.1 call extern $get_bump()
+	%.3 =l loadl %.2
+	storel %.3, %.1
+	%.4 =l add %.2, 8
+	%.5 =l add %.1, 8
+	%.6 =l loadl %.4
+	storel %.6, %.5
+	%.8 =l add %.1, 0
+	%.9 =l loadl %.8
+	storel %.9, %.7
+	%.10 =l loadl %.7
+	%.11 =l extsw 10
+	%.12 =l add %.1, 8
+	%.13 =l loadl %.12
+	%.14 =l call %.13(l %.10, l %.11)
+	ret %.14
+}
+export
+function l $g() {
+@start.7
+@body.8
+	ret 16
+}
+export data $bump = align 8 { z 72 }

@@ -1,0 +1,1 @@
+error: struct has member 'after' after flexible array member

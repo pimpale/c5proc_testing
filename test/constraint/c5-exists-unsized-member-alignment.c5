@@ -1,0 +1,1 @@
+mono exists<type S> struct B { int tag; S state; };

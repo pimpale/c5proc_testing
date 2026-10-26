@@ -15,7 +15,7 @@ Parameters of the forall declaration being parsed, until the struct or
 union it defines claims them (see tagspec), and the scope that the
 declaration belongs to.
 */
-static struct generic *pendinggen;
+static struct generic *pendinggen, *pendingexists;
 static struct scope *pendinggenscope;
 
 struct qualtype {
@@ -190,7 +190,7 @@ tagspec(struct scope *s)
 	struct attr a;
 	enum attrkind allowedattr;
 	struct structbuilder b;
-	struct generic *gen;
+	struct generic *gen, *ex;
 	struct scope *ts;
 	enum typequal tq;
 	unsigned long long value, max, min;
@@ -220,12 +220,15 @@ tagspec(struct scope *s)
 		if (!et)
 			error(&tok.loc, "no type in enum type specifier");
 	}
-	/* a struct or union defined by a forall declaration is polymorphic */
+	/* a struct or union defined by a forall or exists declaration is polymorphic */
 	gen = NULL;
+	ex = NULL;
 	ts = s;
-	if (pendinggen && kind != TYPEENUM && (tok.kind == TLBRACE || tok.kind == TSEMICOLON)) {
+	if ((pendinggen || pendingexists) && kind != TYPEENUM && (tok.kind == TLBRACE || tok.kind == TSEMICOLON)) {
 		gen = pendinggen;
+		ex = pendingexists;
 		pendinggen = NULL;
+		pendingexists = NULL;
 		if (tag)
 			ts = pendinggenscope;
 	}
@@ -234,8 +237,8 @@ tagspec(struct scope *s)
 	if (t) {
 		if (t->kind != kind)
 			error(&tok.loc, "redeclaration of tag '%s' with different kind", tag);
-		if (gen)
-			error(&tok.loc, "redeclaration of tag '%s' with forall", tag);
+		if (gen || ex)
+			error(&tok.loc, "redeclaration of tag '%s' with forall or exists", tag);
 		if (kind != TYPEENUM && t->u.structunion.gen && tok.kind != TLBRACE) {
 			if (tok.kind == TLESS)
 				t = geninst(t->u.structunion.gen, genargs(s, t->u.structunion.gen, false), &tq);
@@ -257,6 +260,10 @@ tagspec(struct scope *s)
 				gen->name = tag;
 				t->u.structunion.gen = gen;
 				t->u.structunion.genargs = genidentity(gen);
+			}
+			if (ex) {
+				ex->name = tag;
+				t->u.structunion.exists = ex;
 			}
 		}
 		t->incomplete = true;
@@ -872,6 +879,30 @@ addmember(struct structbuilder *b, struct qualtype mt, char *name, int align, un
 		error(&tok.loc, "struct member '%s' has function type", name);
 	if (mt.type->prop & PROPVM)
 		error(&tok.loc, "struct member '%s' has variably modified type", name);
+	if (mt.type->kind == TYPEPARAM && mt.type->u.param.gen == t->u.structunion.exists) {
+		/*
+		A mono existential parameter can be the type of the last
+		member, which is unsized like a flexible array member.
+		*/
+		if (!mt.type->u.param.gen->ismono)
+			error(&tok.loc, "struct member '%s' has incomplete type", name);
+		if (t->kind != TYPESTRUCT || !align)
+			error(&tok.loc, "member '%s' with existential type must be in a struct and have an alignment specifier", name);
+		m = xmalloc(sizeof(*m));
+		m->type = mt.type;
+		m->qual = mt.qual;
+		m->name = name;
+		m->next = NULL;
+		m->bits = (struct bitfield){0};
+		m->offset = ALIGNUP(t->size, align);
+		t->size = m->offset;
+		if (t->align < align)
+			t->align = align;
+		*b->last = m;
+		b->last = &m->next;
+		t->prop |= PROPFLEX;
+		return;
+	}
 	/* the layout of a mono struct is computed for each instance */
 	if (typedep(mt.type) && !(t->u.structunion.gen && t->u.structunion.gen->ismono))
 		error(&tok.loc, "member '%s' with type depending on mono parameters requires a mono forall %s", name, t->kind == TYPESTRUCT ? "struct" : "union");
@@ -1172,27 +1203,17 @@ Parse a declaration. At block scope, `fc` is the function being
 defined, and statements initializing automatic objects are added to
 `end`.
 */
-/* parse `[mono|erased] forall<...>`, declaring the parameters in s */
-static struct generic *
-genparams(struct scope *s)
+/* parse a parameter list `<...>` of a forall or exists clause into g, declaring the parameters in s */
+static void
+paramlist(struct scope *s, struct generic *g, const char *clause)
 {
-	struct generic *g;
 	struct array params = {0};
 	struct genparam *p;
 	struct decl *d;
-	bool ismono;
 	size_t i, j;
 	int nconst;
 
-	ismono = consume(T_MONO);
-	if (!ismono)
-		consume(T_ERASED);
-	if (tok.kind == T_EXISTS)
-		error(&tok.loc, "existential types are not yet implemented");
-	if (!consume(T_FORALL))
-		error(&tok.loc, "expected 'forall' after 'mono' or 'erased'");
-	g = mkgeneric(ismono);
-	expect(TLESS, "after 'forall'");
+	expect(TLESS, clause);
 	nconst = 0;
 	do {
 		p = arrayadd(&params, sizeof(*p));
@@ -1206,7 +1227,7 @@ genparams(struct scope *s)
 			p->bit = QUALCPARAM0 << nconst++;
 			break;
 		default:
-			error(&tok.loc, "expected 'type', 'size', or 'constness' in forall parameter list");
+			error(&tok.loc, "expected 'type', 'size', or 'constness' in parameter list");
 		}
 		next();
 		p->name = expect(TIDENT, "after parameter kind");
@@ -1219,8 +1240,10 @@ genparams(struct scope *s)
 		p = &g->params[i];
 		for (j = 0; j < i; ++j) {
 			if (strcmp(g->params[j].name, p->name) == 0)
-				error(&tok.loc, "duplicate forall parameter '%s'", p->name);
+				error(&tok.loc, "duplicate parameter '%s'", p->name);
 		}
+		if (scopegetdecl(s, p->name, false))
+			error(&tok.loc, "duplicate parameter '%s'", p->name);
 		if (p->kind == GENSIZE || p->kind == GENCONSTNESS) {
 			/* a size parameter is a constant of type size_t; a constness parameter is a qualifier */
 			d = mkdecl(p->name, DECLCONST, &typeulong, QUALNONE, LINKNONE);
@@ -1232,6 +1255,42 @@ genparams(struct scope *s)
 		p->type = mkparamtype(g, i, p->name);
 		scopeputdecl(s, mkdecl(p->name, DECLTYPE, p->type, QUALNONE, LINKNONE));
 	}
+}
+
+/*
+Parse `[mono|erased] [forall<...>] [exists<...>]`, declaring the
+parameters in s. The parameters of the exists clause, if any, are
+stored in *exists.
+*/
+static struct generic *
+genparams(struct scope *s, struct generic **exists)
+{
+	struct generic *g, *ex;
+	size_t i;
+	bool ismono;
+
+	ismono = consume(T_MONO);
+	if (!ismono)
+		consume(T_ERASED);
+	g = NULL;
+	if (consume(T_FORALL)) {
+		g = mkgeneric(ismono);
+		paramlist(s, g, "after 'forall'");
+	}
+	ex = NULL;
+	if (consume(T_EXISTS)) {
+		ex = mkgeneric(ismono);
+		paramlist(s, ex, "after 'exists'");
+		for (i = 0; i < ex->nparam; ++i) {
+			if (ex->params[i].kind != GENTYPE)
+				error(&tok.loc, "exists parameters must be type parameters");
+		}
+	} else if (!g) {
+		error(&tok.loc, "expected 'forall' or 'exists' after 'mono' or 'erased'");
+	}
+	if (tok.kind == T_FORALL)
+		error(&tok.loc, "'exists' must come after 'forall'");
+	*exists = ex;
 	return g;
 }
 
@@ -1268,7 +1327,7 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 	struct funcctx bodyctx;
 	struct func *f;
 	struct stmt *body;
-	struct generic *gen;
+	struct generic *gen, *exgen;
 	struct genarg *args;
 	struct scope *ls;
 	enum typequal q;
@@ -1283,6 +1342,7 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 	/* names are looked up in ls, which contains the forall parameters, but declared in s */
 	ls = s;
 	gen = NULL;
+	exgen = NULL;
 	switch (tok.kind) {
 	case T_MONO:
 	case T_ERASED:
@@ -1291,13 +1351,18 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 		if (fc)
 			error(&tok.loc, "polymorphic declarations must be at file scope");
 		ls = mkscope(s);
-		gen = genparams(ls);
+		gen = genparams(ls, &exgen);
 		pendinggen = gen;
+		pendingexists = exgen;
 		pendinggenscope = s;
 		break;
 	}
 	base = declspecs(ls, &sc, &fs, &align);
 	pendinggen = NULL;
+	if (pendingexists) {
+		pendingexists = NULL;
+		error(&tok.loc, "exists can only be used in struct and union declarations");
+	}
 	if (!base.type) {
 		if (gen)
 			error(&tok.loc, "expected declaration after forall parameter list");

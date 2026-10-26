@@ -973,6 +973,70 @@ geninfer(struct scope *s, struct expr *r, struct expr **args)
 	r->type = mkpointertype(r->base->type, QUALNONE);
 }
 
+struct exvalue {
+	struct decl *decl;
+	struct generic *exists;
+	struct genarg *args;
+	struct exvalue *next;
+};
+
+/*
+The arguments for the existential parameters of a struct value whose
+member is accessed through the pointer r (with operator op). Each value
+has its own types for them, which are only compatible with themselves.
+The value must not change while it is used, so it must be a const object
+named by an identifier, or reached through a const pointer to const.
+*/
+static struct genarg *
+exopen(struct expr *r, enum tokenkind op, struct type *t, char *member)
+{
+	static struct exvalue *values;
+	struct exvalue *v;
+	struct generic *ex, *g;
+	struct expr *base;
+	struct decl *d;
+	struct array name;
+	size_t i;
+
+	ex = t->u.structunion.exists;
+	d = NULL;
+	if (op == TPERIOD) {
+		base = r->base;
+		if (base->kind == EXPRIDENT && r->type->qual & QUALCONST)
+			d = base->u.ident.decl;
+	} else if (r->kind == EXPRIDENT && r->qual & QUALCONST && r->type->qual & QUALCONST) {
+		d = r->u.ident.decl;
+	}
+	if (!d)
+		error(&tok.loc, "member '%s' has an existential type, so the struct must be a const object or accessed through a const pointer to const", member);
+	for (v = values; v; v = v->next) {
+		if (v->decl == d && v->exists == ex)
+			return v->args;
+	}
+	/* new types, named after the parameter and the value, which are never substituted */
+	g = mkgeneric(false);
+	g->nparam = ex->nparam;
+	g->params = xreallocarray(NULL, ex->nparam, sizeof(g->params[0]));
+	v = xmalloc(sizeof(*v));
+	v->decl = d;
+	v->exists = ex;
+	v->args = xreallocarray(NULL, ex->nparam, sizeof(v->args[0]));
+	for (i = 0; i < ex->nparam; ++i) {
+		name = (struct array){0};
+		arrayaddbuf(&name, ex->params[i].name, strlen(ex->params[i].name));
+		arrayaddbuf(&name, " of ", 4);
+		arrayaddbuf(&name, d->name, strlen(d->name) + 1);
+		g->params[i] = ex->params[i];
+		g->params[i].name = name.val;
+		g->params[i].type = mkparamtype(g, i, name.val);
+		memset(&v->args[i], 0, sizeof(v->args[i]));
+		v->args[i].type = g->params[i].type;
+	}
+	v->next = values;
+	values = v;
+	return v->args;
+}
+
 /* TODO: merge with init.c:designator() */
 static void
 designator(struct scope *s, struct type *t, unsigned long long *offset)
@@ -1134,9 +1198,10 @@ static struct expr *
 postfixexpr(struct scope *s, struct expr *r)
 {
 	struct expr *e, *arr, *idx, *tmp, **end, *args;
-	struct type *t;
+	struct type *t, *mt;
 	struct decl *p;
 	struct member *m;
+	enum typequal mq;
 	unsigned long long offset;
 	enum typequal tq;
 	enum tokenkind op;
@@ -1228,8 +1293,12 @@ postfixexpr(struct scope *s, struct expr *r)
 			m = typemember(t, tokenstr(tok.kind), &offset);
 			if (!m)
 				error(&tok.loc, "struct/union has no member named '%s'", tok.lit);
+			mt = m->type;
+			mq = tq | m->qual;
+			if (t->u.structunion.exists && typehasparam(mt, t->u.structunion.exists))
+				mt = typesubst(mt, &mq, t->u.structunion.exists, exopen(r, op, t, m->name));
 			r = mkbinaryexpr(&tok.loc, TADD, exprconvert(r, &typeulong), typedep(t) ? mklayoutexpr(LAYOUTOFFSET, t, m->name) : mkconstexpr(&typeulong, offset));
-			r->type = mkpointertype(m->type, tq | m->qual);
+			r->type = mkpointertype(mt, mq);
 			r = mkunaryexpr(TMUL, r);
 			r->lvalue = lvalue;
 			if (m->bits.before || m->bits.after) {

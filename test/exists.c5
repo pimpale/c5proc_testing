@@ -1,0 +1,37 @@
+exists<type Data>
+struct Allocator {
+	Data *data;
+	void *(*allocate)(Data *, unsigned long);
+};
+
+struct Bump {
+	char buf[64];
+	unsigned long used;
+};
+
+void *bump_alloc(struct Bump *, unsigned long);
+struct Bump bump;
+
+struct Allocator get_bump(void) {
+	return (struct Allocator){.data = &bump, .allocate = bump_alloc};
+}
+
+void *alloc_via(const struct Allocator *const a, unsigned long n) {
+	return a->allocate(a->data, n);
+}
+
+void *f(void) {
+	const struct Allocator la = get_bump();
+	typeof(la.data) d = la.data;
+	return la.allocate(d, 10);
+}
+
+mono exists<type S>
+struct Dyn {
+	int tag;
+	alignas(16) S state;
+};
+
+unsigned long g(void) {
+	return sizeof(struct Dyn);
+}

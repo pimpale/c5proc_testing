@@ -1,0 +1,1 @@
+error: member 'use' has an existential type, so the struct must be a const object or accessed through a const pointer to const

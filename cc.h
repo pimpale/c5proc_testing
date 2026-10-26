@@ -152,6 +152,8 @@ struct type {
 			/* for mono structs, the fields to lay out for each instance */
 			struct structitem *items;
 			bool packed;
+			/* existential parameters, which each value has its own arguments for */
+			struct generic *exists;
 		} structunion;
 		struct {
 			struct generic *gen;

@@ -1,0 +1,5 @@
+exists<type D> struct A { D *data; void (*use)(D *); };
+struct X { int x; }; struct Y { int y; };
+void usex(struct X *); void usey(struct Y *);
+struct X gx; struct Y gy;
+struct A f(void) { return (struct A){ &gx, usey }; }

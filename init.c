@@ -14,6 +14,8 @@ struct object {
 	} u;
 	/* index of the current array element */
 	unsigned long long elem;
+	/* for a struct with existential parameters, their arguments, determined by the initializers */
+	struct genarg *exbind;
 	bool iscur;
 };
 
@@ -169,6 +171,8 @@ initresolve(struct init *init, struct type *t)
 	return head;
 }
 
+static struct genarg *exbind(struct type *);
+
 static void
 subobj(struct initparser *p, struct type *t, unsigned long long off)
 {
@@ -181,6 +185,48 @@ subobj(struct initparser *p, struct type *t, unsigned long long off)
 	p->sub->type = t;
 	p->sub->offset = off;
 	p->sub->iscur = false;
+	p->sub->exbind = exbind(t);
+}
+
+/* arguments to be determined for the existential parameters of t, if any */
+static struct genarg *
+exbind(struct type *t)
+{
+	struct genarg *args;
+	struct generic *ex;
+
+	if (t->kind != TYPESTRUCT && t->kind != TYPEUNION || !t->u.structunion.exists)
+		return NULL;
+	ex = t->u.structunion.exists;
+	args = xreallocarray(NULL, ex->nparam, sizeof(*args));
+	memset(args, 0, ex->nparam * sizeof(*args));
+	return args;
+}
+
+/*
+The type of an initializer for a member that mentions existential
+parameters of its struct, which binds them. All initializers of the
+struct must agree.
+*/
+static struct type *
+exmember(struct initparser *p, struct type *t, struct expr *e)
+{
+	struct object *o;
+	struct generic *ex;
+	enum typequal q;
+
+	if (p->sub == p->obj)
+		return t;
+	o = p->sub - 1;
+	if (!o->exbind)
+		return t;
+	ex = o->type->u.structunion.exists;
+	if (!typehasparam(t, ex))
+		return t;
+	if (!genunify(ex, o->exbind, t, QUALNONE, e->type, QUALNONE))
+		error(&tok.loc, "initializer is inconsistent with the existential parameters of %s '%s'", o->type->kind == TYPESTRUCT ? "struct" : "union", ex->name ? ex->name : "<anonymous>");
+	q = QUALNONE;
+	return typesubst(t, &q, ex, o->exbind);
 }
 
 static bool
@@ -329,6 +375,7 @@ parseinit(struct scope *s, struct type *t)
 	p.sub->offset = 0;
 	p.sub->type = t;
 	p.sub->iscur = false;
+	p.sub->exbind = exbind(t);
 	p.init = NULL;
 	p.last = &p.init;
 	p.dep = typedep(t);
@@ -393,7 +440,7 @@ parseinit(struct scope *s, struct type *t)
 				goto add;
 			default:  /* scalar type */
 				assert(t->prop & PROPSCALAR);
-				expr = exprassign(expr, t);
+				expr = exprassign(expr, exmember(&p, t, expr));
 				goto add;
 			}
 			focus(&p);

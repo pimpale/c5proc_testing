@@ -1,0 +1,4 @@
+forall<type T> typedef struct { T (*f)(T, T); } Add;
+forall<type T> struct Node { T *val; struct Node<T> *next; };
+
+struct Node *n;

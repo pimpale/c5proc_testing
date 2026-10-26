@@ -1,0 +1,87 @@
+type :.1 = { l, }
+export
+function l $add(l %.1, l %.3, :.1 %.5) {
+@start.1
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+@body.2
+	%.6 =l loadl %.2
+	%.7 =l loadl %.4
+	%.8 =l add %.5, 0
+	%.9 =l loadl %.8
+	%.10 =l call %.9(l %.6, l %.7)
+	ret %.10
+}
+export
+function l $last(l %.1) {
+@start.3
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.4
+@while_cond.5
+	%.3 =l loadl %.2
+	%.4 =l add %.3, 8
+	%.5 =l loadl %.4
+	%.6 =w cnel %.5, 0
+	jnz %.6, @while_body.6, @while_join.7
+@while_body.6
+	%.7 =l loadl %.2
+	%.8 =l add %.7, 8
+	%.9 =l loadl %.8
+	storel %.9, %.2
+	jmp @while_cond.5
+@while_join.7
+	%.10 =l loadl %.2
+	%.11 =l add %.10, 0
+	%.12 =l loadl %.11
+	ret %.12
+}
+export
+function l $id(l %.1) {
+@start.8
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.9
+	%.3 =l loadl %.2
+	ret %.3
+}
+type :.2 = { l, }
+export
+function w $f() {
+@start.10
+	%.1 =l alloc8 8
+	%.2 =l alloc4 4
+	%.3 =l alloc4 4
+	%.4 =l alloc8 16
+	%.7 =l alloc8 16
+	%.9 =l alloc4 4
+	%.10 =l alloc8 8
+@body.11
+	storel extern $maxp, %.1
+	storew 1, %.2
+	storew 2, %.3
+	storel %.3, %.4
+	%.5 =l add %.4, 8
+	%.6 =l extsw 0
+	storel %.6, %.5
+	storel %.2, %.7
+	%.8 =l add %.7, 8
+	storel %.4, %.8
+	storew 7, %.9
+	%.11 =l call extern $id(l %.9)
+	storel %.11, %.10
+	%.12 =l call extern $add(l %.2, l %.3, :.2 %.1)
+	%.13 =w loadw %.12
+	%.14 =l call extern $add(l %.2, l %.3, :.2 %.1)
+	%.15 =w loadw %.14
+	%.16 =w add %.13, %.15
+	%.17 =l call extern $last(l %.7)
+	%.18 =w loadw %.17
+	%.19 =w add %.16, %.18
+	%.20 =l loadl %.10
+	%.21 =w loadw %.20
+	%.22 =w add %.19, %.21
+	ret %.22
+}

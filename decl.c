@@ -10,6 +10,14 @@
 
 static struct decl *tentativedefns, **tentativedefnsend = &tentativedefns;
 
+/*
+Parameters of the forall declaration being parsed, until the struct or
+union it defines claims them (see tagspec), and the scope that the
+declaration belongs to.
+*/
+static struct generic *pendinggen;
+static struct scope *pendinggenscope;
+
 struct qualtype {
 	struct type *type;
 	enum typequal qual;
@@ -170,6 +178,9 @@ tagspec(struct scope *s)
 	struct attr a;
 	enum attrkind allowedattr;
 	struct structbuilder b;
+	struct generic *gen;
+	struct scope *ts;
+	enum typequal tq;
 	unsigned long long value, max, min;
 	bool sign;
 	int i;
@@ -197,11 +208,28 @@ tagspec(struct scope *s)
 		if (!et)
 			error(&tok.loc, "no type in enum type specifier");
 	}
+	/* a struct or union defined by a forall declaration is polymorphic */
+	gen = NULL;
+	ts = s;
+	if (pendinggen && kind != TYPEENUM && (tok.kind == TLBRACE || tok.kind == TSEMICOLON)) {
+		gen = pendinggen;
+		pendinggen = NULL;
+		if (tag)
+			ts = pendinggenscope;
+	}
 	if (tag)
-		t = scopegettag(s, tag, tok.kind != TLBRACE && tok.kind != TSEMICOLON);
+		t = scopegettag(ts, tag, tok.kind != TLBRACE && tok.kind != TSEMICOLON);
 	if (t) {
 		if (t->kind != kind)
 			error(&tok.loc, "redeclaration of tag '%s' with different kind", tag);
+		if (gen)
+			error(&tok.loc, "redeclaration of tag '%s' with forall", tag);
+		if (kind != TYPEENUM && t->u.structunion.gen && tok.kind != TLBRACE) {
+			if (tok.kind == TLESS)
+				t = geninst(t->u.structunion.gen, genargs(s, t->u.structunion.gen, false), &tq);
+			else if (tok.kind != TSEMICOLON)
+				error(&tok.loc, "%s '%s' requires type arguments", kind == TYPESTRUCT ? "struct" : "union", tag);
+		}
 	} else {
 		if (kind == TYPEENUM) {
 			t = mktype(kind, PROPSCALAR|PROPARITH|PROPREAL|PROPINT);
@@ -212,10 +240,15 @@ tagspec(struct scope *s)
 			t->align = 0;
 			t->u.structunion.tag = tag;
 			t->u.structunion.members = NULL;
+			if (gen) {
+				gen->pattern = t;
+				t->u.structunion.gen = gen;
+				t->u.structunion.genargs = genidentity(gen);
+			}
 		}
 		t->incomplete = true;
 		if (tag)
-			scopeputtag(s, tag, t);
+			scopeputtag(ts, tag, t);
 	}
 	if (tok.kind != TLBRACE)
 		return t;
@@ -474,6 +507,11 @@ declspecs(struct scope *s, enum storageclass *sc, enum funcspec *fs, int *align)
 			tq |= d->qual;
 			++ntypes;
 			next();
+			if (d->gen) {
+				if (tok.kind != TLESS)
+					error(&tok.loc, "typedef '%s' requires type arguments", d->name);
+				t = geninst(d->gen, genargs(s, d->gen, false), &tq);
+			}
 			break;
 		}
 		if (ntypes > 1 || (t && ts))
@@ -1057,6 +1095,66 @@ Parse a declaration. At block scope, `fc` is the function being
 defined, and statements initializing automatic objects are added to
 `end`.
 */
+/* parse `[mono|erased] forall<...>`, declaring the parameters in s */
+static struct generic *
+genparams(struct scope *s)
+{
+	struct generic *g;
+	struct array params = {0};
+	struct genparam *p;
+	bool ismono;
+	size_t i, j;
+
+	ismono = consume(T_MONO);
+	if (!ismono)
+		consume(T_ERASED);
+	if (tok.kind == T_EXISTS)
+		error(&tok.loc, "existential types are not yet implemented");
+	if (!consume(T_FORALL))
+		error(&tok.loc, "expected 'forall' after 'mono' or 'erased'");
+	if (ismono)
+		error(&tok.loc, "mono declarations are not yet implemented");
+	g = mkgeneric(ismono);
+	expect(TLESS, "after 'forall'");
+	do {
+		if (tok.kind == C5_SIZE || tok.kind == C5_CONSTNESS)
+			error(&tok.loc, "'%s' parameters are not yet implemented", tokenstr(tok.kind));
+		if (tok.kind != C5_TYPE)
+			error(&tok.loc, "expected 'type', 'size', or 'constness' in forall parameter list");
+		next();
+		p = arrayadd(&params, sizeof(*p));
+		p->name = expect(TIDENT, "after 'type'");
+		p->type = NULL;
+	} while (consume(TCOMMA));
+	closeangle();
+	g->nparam = params.len / sizeof(*p);
+	g->params = params.val;
+	for (i = 0; i < g->nparam; ++i) {
+		p = &g->params[i];
+		for (j = 0; j < i; ++j) {
+			if (strcmp(g->params[j].name, p->name) == 0)
+				error(&tok.loc, "duplicate forall parameter '%s'", p->name);
+		}
+		p->type = mkparamtype(g, i, p->name);
+		scopeputdecl(s, mkdecl(p->name, DECLTYPE, p->type, QUALNONE, LINKNONE));
+	}
+	return g;
+}
+
+/* check that an erased function does not pass or return a type parameter by value */
+static void
+checkerased(struct type *t, char *name)
+{
+	struct decl *p;
+
+	if (t->base->kind == TYPEPARAM)
+		error(&tok.loc, "erased function '%s' cannot return type parameter '%s' by value", name, t->base->u.param.name);
+	for (p = t->u.func.params; p; p = p->next) {
+		if (p->type->kind == TYPEPARAM)
+			error(&tok.loc, "erased function '%s' cannot take type parameter '%s' by value", name, p->type->u.param.name);
+	}
+}
+
 bool
 decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 {
@@ -1076,6 +1174,11 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 	struct funcctx bodyctx;
 	struct func *f;
 	struct stmt *body;
+	struct generic *gen;
+	struct genarg *args;
+	struct scope *ls;
+	enum typequal q;
+	size_t i;
 	int align;
 
 	if (staticassert(s))
@@ -1083,9 +1186,29 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 	a.kind = 0;
 	if (attr(&a, ATTRNORETURN) && consume(TSEMICOLON))
 		return true;
-	base = declspecs(s, &sc, &fs, &align);
-	if (!base.type)
+	/* names are looked up in ls, which contains the forall parameters, but declared in s */
+	ls = s;
+	gen = NULL;
+	switch (tok.kind) {
+	case T_MONO:
+	case T_ERASED:
+	case T_FORALL:
+	case T_EXISTS:
+		if (fc)
+			error(&tok.loc, "polymorphic declarations must be at file scope");
+		ls = mkscope(s);
+		gen = genparams(ls);
+		pendinggen = gen;
+		pendinggenscope = s;
+		break;
+	}
+	base = declspecs(ls, &sc, &fs, &align);
+	pendinggen = NULL;
+	if (!base.type) {
+		if (gen)
+			error(&tok.loc, "expected declaration after forall parameter list");
 		return false;
+	}
 	/* with an inferred type, auto has no effect on storage duration or linkage */
 	if (base.type == &typeauto)
 		sc &= ~SCAUTO;
@@ -1102,13 +1225,15 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 			error(&tok.loc, "external declaration must not contain 'register'");
 	}
 	if (consume(TSEMICOLON)) {
+		if (gen && !gen->pattern)
+			error(&tok.loc, "forall declaration declares nothing");
 		if (base.type == &typeauto)
 			error(&tok.loc, "declaration with inferred type has no declarator");
 		/* XXX 6.7p2 error unless in function parameter/struct/union, or tag/enum members are declared */
 		return true;
 	}
 	for (;;) {
-		qt = declarator(s, base, &name, NULL, &funcscope, false);
+		qt = declarator(ls, base, &name, NULL, &funcscope, false);
 		t = qt.type;
 		tq = qt.qual;
 		autoinit = NULL;
@@ -1119,7 +1244,7 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 				error(&tok.loc, "typedef '%s' cannot have inferred type", name);
 			if (!consume(TASSIGN))
 				error(&tok.loc, "declaration of '%s' with inferred type must have an initializer", name);
-			autoinit = inferinit(s, &t);
+			autoinit = inferinit(ls, &t);
 		}
 		if (consume(T__ASM__)) {
 			struct stringlit lit;
@@ -1138,18 +1263,45 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 		prior = scopegetdecl(s, name, false);
 		if (prior && prior->kind != kind)
 			error(&tok.loc, "'%s' redeclared with different kind", name);
+		if (prior && !prior->gen != !gen)
+			error(&tok.loc, "'%s' redeclared %s forall", name, gen ? "with" : "without");
+		if (gen && prior) {
+			/* compare with the prior declaration in terms of its parameters */
+			if (prior->gen->nparam != gen->nparam)
+				error(&tok.loc, "'%s' redeclared with different number of forall parameters", name);
+			args = xreallocarray(NULL, gen->nparam, sizeof(*args));
+			for (i = 0; i < gen->nparam; ++i) {
+				args[i].type = prior->gen->params[i].type;
+				args[i].qual = QUALNONE;
+			}
+			q = QUALNONE;
+			t = typesubst(t, &q, gen, args);
+		}
 		switch (kind) {
 		case DECLTYPE:
 			if (align)
 				error(&tok.loc, "typedef '%s' declared with alignment specifier", name);
 			if (asmname)
 				error(&tok.loc, "typedef '%s' declared with assembler label", name);
-			if (!prior)
+			if (gen) {
+				if (prior)
+					error(&tok.loc, "forall typedef '%s' redefined", name);
+				d = mkdecl(name, DECLTYPE, t, tq, LINKNONE);
+				d->gen = gen;
+				if (!gen->pattern)
+					gen->pattern = t;
+				else if (gen->pattern != t)
+					error(&tok.loc, "forall declaration must declare a single type");
+				scopeputdecl(s, d);
+			} else if (!prior) {
 				scopeputdecl(s, mkdecl(name, DECLTYPE, t, tq, LINKNONE));
-			else if (!typesame(prior->type, t) || prior->qual != tq)
+			} else if (!typesame(prior->type, t) || prior->qual != tq) {
 				error(&tok.loc, "typedef '%s' redefined with different type", name);
+			}
 			break;
 		case DECLOBJECT:
+			if (gen)
+				error(&tok.loc, "forall variables are not yet implemented");
 			if (align && align < t->align)
 				error(&tok.loc, "object '%s' requires alignment %d, which is stricter than specified alignment %d", name, t->align, align);
 			d = declcommon(s, kind, name, asmname, t, tq, sc, prior);
@@ -1173,7 +1325,7 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 					error(&tok.loc, "object '%s' with block scope and %s linkage cannot have initializer", name, d->linkage == LINKEXTERN ? "external" : "internal");
 				if (d->defined)
 					error(&tok.loc, "object '%s' redefined", name);
-				init = autoinit ? autoinit : parseinit(s, d->type);
+				init = autoinit ? autoinit : parseinit(ls, d->type);
 				hasinit = true;
 			} else if (sc & SCEXTERN) {
 				break;
@@ -1192,7 +1344,11 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 				error(&tok.loc, "function '%s' declared with alignment specifier", name);
 			if (fc && sc && sc != SCEXTERN)  /* 6.7.1p7 */
 				error(&tok.loc, "function '%s' with block scope may only have storage class 'extern'", name);
+			if (gen && !gen->ismono)
+				checkerased(t, name);
 			d = declcommon(s, kind, name, asmname, t, tq, sc, prior);
+			if (gen && !prior)
+				d->gen = gen;
 			d->value = mkglobal(d);
 			d->u.func.inlinedefn = d->linkage == LINKEXTERN && fs & FUNCINLINE && !(sc & SCEXTERN) && (!prior || prior->u.func.inlinedefn);
 			d->u.func.isnoreturn = fs & FUNCNORETURN || a.kind & ATTRNORETURN;
@@ -1204,8 +1360,9 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 				/* re-open scope from function declarator */
 				assert(funcscope);
 				s = funcscope;
-				f = mkfunc(d, name, t, s);
-				bodyctx.type = t;
+				/* the body uses the declarator's own forall parameters */
+				f = mkfunc(d, name, qt.type, s);
+				bodyctx.type = qt.type;
 				body = funcbody(&bodyctx, s);
 				lower(f, body);
 				delstmt(body);

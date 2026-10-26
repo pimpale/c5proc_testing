@@ -1,0 +1,5 @@
+forall<type T> typedef struct { T (*f)(T, T); } Add;
+forall<type T> struct Node { T *val; struct Node<T> *next; };
+
+forall<type T> T *pick(T *a, T *b);
+void f(void) { int x; double d; pick(&x, &d); }

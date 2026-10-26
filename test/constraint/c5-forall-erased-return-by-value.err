@@ -1,0 +1,1 @@
+error: erased function 'byval' cannot return type parameter 'T' by value

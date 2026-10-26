@@ -27,6 +27,7 @@ SRC=\
 	decl.c\
 	eval.c\
 	expr.c\
+	generic.c\
 	init.c\
 	lower.c\
 	main.c\
@@ -56,6 +57,7 @@ $(objdir)/decl.o    : decl.c    $(HDR)          $(stagedeps) ; $(CC) $(CFLAGS) -
 $(objdir)/driver.o  : driver.c  util.h config.h $(stagedeps) ; $(CC) $(CFLAGS) -c -o $@ driver.c
 $(objdir)/eval.o    : eval.c    $(HDR)          $(stagedeps) ; $(CC) $(CFLAGS) -c -o $@ eval.c
 $(objdir)/expr.o    : expr.c    $(HDR)          $(stagedeps) ; $(CC) $(CFLAGS) -c -o $@ expr.c
+$(objdir)/generic.o : generic.c $(HDR)          $(stagedeps) ; $(CC) $(CFLAGS) -c -o $@ generic.c
 $(objdir)/init.o    : init.c    $(HDR)          $(stagedeps) ; $(CC) $(CFLAGS) -c -o $@ init.c
 $(objdir)/lower.o   : lower.c   $(HDR)          $(stagedeps) ; $(CC) $(CFLAGS) -c -o $@ lower.c
 $(objdir)/main.o    : main.c    $(HDR) arg.h    $(stagedeps) ; $(CC) $(CFLAGS) -c -o $@ main.c

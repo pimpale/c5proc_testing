@@ -698,6 +698,8 @@ generic(struct scope *s)
 }
 
 /* 6.5 Expressions */
+static void genref(struct scope *, struct expr *);
+
 static struct expr *
 primaryexpr(struct scope *s)
 {
@@ -807,15 +809,95 @@ primaryexpr(struct scope *s)
 			e->qual = d->qual;
 			e->lvalue = d->kind == DECLOBJECT;
 			e->u.ident.decl = d;
+			e->u.ident.genargs = NULL;
+			next();
+			if (d->gen)
+				genref(s, e);
 			if (d->kind != DECLBUILTIN)
 				e = decay(e);
-			next();
 			break;
 		}
 		error(&tok.loc, "expected primary expression");
 	}
 
 	return e;
+}
+
+/*
+A reference to a polymorphic function. With all type arguments given,
+it has the substituted type. Otherwise, the arguments are inferred
+when it is called.
+*/
+static void
+genref(struct scope *s, struct expr *e)
+{
+	struct decl *d;
+	struct genarg *args;
+	enum typequal q;
+	size_t i;
+
+	d = e->u.ident.decl;
+	if (tok.kind == TLESS) {
+		args = genargs(s, d->gen, true);
+		for (i = 0; i < d->gen->nparam; ++i) {
+			if (!args[i].type)
+				break;
+		}
+		if (i == d->gen->nparam) {
+			q = QUALNONE;
+			e->type = typesubst(d->type, &q, d->gen, args);
+			return;
+		}
+		e->u.ident.genargs = args;
+	}
+	if (tok.kind != TLPAREN)
+		error(&tok.loc, "polymorphic function '%s' requires type arguments", d->name);
+}
+
+/*
+Infer the type arguments of a call to a polymorphic function from the
+arguments, and substitute them into the type of the callee r. The
+arguments are parsed into `args`.
+*/
+static void
+geninfer(struct scope *s, struct expr *r, struct expr **args)
+{
+	struct decl *d, *p;
+	struct generic *g;
+	struct genarg *bind;
+	struct expr *a, **end;
+	struct type *t;
+	enum typequal q;
+	size_t i;
+
+	d = r->base->u.ident.decl;
+	g = d->gen;
+	bind = xreallocarray(NULL, g->nparam, sizeof(*bind));
+	if (r->base->u.ident.genargs)
+		memcpy(bind, r->base->u.ident.genargs, g->nparam * sizeof(*bind));
+	else
+		memset(bind, 0, g->nparam * sizeof(*bind));
+	end = args;
+	while (tok.kind != TRPAREN) {
+		if (end != args)
+			expect(TCOMMA, "or ')' after function call argument");
+		*end = assignexpr(s);
+		end = &(*end)->next;
+	}
+	*end = NULL;
+	t = r->type->base;
+	for (a = *args, p = t->u.func.params, i = 1; a && p; a = a->next, p = p->next, ++i) {
+		if (!genunify(g, bind, p->type, p->qual, a->type, QUALNONE))
+			error(&tok.loc, "cannot infer type arguments of '%s' from argument %zu", d->name, i);
+	}
+	for (i = 0; i < g->nparam; ++i) {
+		if (!bind[i].type)
+			error(&tok.loc, "cannot infer type parameter '%s' of '%s'", g->params[i].name, d->name);
+	}
+	q = QUALNONE;
+	t = typesubst(t, &q, g, bind);
+	r->base->type = t;
+	r->type = mkpointertype(t, QUALNONE);
 }
 
 /* TODO: merge with init.c:designator() */
@@ -978,7 +1060,7 @@ mkincdecexpr(enum tokenkind op, struct expr *base, bool post)
 static struct expr *
 postfixexpr(struct scope *s, struct expr *r)
 {
-	struct expr *e, *arr, *idx, *tmp, **end;
+	struct expr *e, *arr, *idx, *tmp, **end, *args;
 	struct type *t;
 	struct decl *p;
 	struct member *m;
@@ -1018,18 +1100,26 @@ postfixexpr(struct scope *s, struct expr *r)
 			}
 			if (r->type->kind != TYPEPOINTER || r->type->base->kind != TYPEFUNC)
 				error(&tok.loc, "called object is not a function");
+			args = NULL;
+			if (r->decayed && r->base->kind == EXPRIDENT && r->base->u.ident.decl->gen && typehasparam(r->type->base, r->base->u.ident.decl->gen))
+				geninfer(s, r, &args);
 			t = r->type->base;
 			e = mkexpr(EXPRCALL, t->base, r);
 			e->u.call.args = NULL;
 			e->u.call.nargs = 0;
 			p = t->u.func.params;
 			end = &e->u.call.args;
-			while (tok.kind != TRPAREN) {
-				if (e->u.call.args)
+			while (args ? args != NULL : tok.kind != TRPAREN) {
+				if (!args && e->u.call.args)
 					expect(TCOMMA, "or ')' after function call argument");
 				if (!p && !t->u.func.isvararg)
 					error(&tok.loc, "too many arguments for function call");
-				*end = assignexpr(s);
+				if (args) {
+					*end = args;
+					args = args->next;
+				} else {
+					*end = assignexpr(s);
+				}
 				if (t->u.func.isvararg && !p)
 					*end = exprpromote(*end);
 				else

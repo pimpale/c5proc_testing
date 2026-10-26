@@ -1,0 +1,38 @@
+forall<type T>
+typedef struct {
+	T (*add)(T, T);
+} Add;
+
+forall<type T>
+T *add(T *a, T *b, Add<T *> vt) {
+	return vt.add(a, b);
+}
+
+forall<type T>
+struct Node {
+	T *val;
+	struct Node<T> *next;
+};
+
+forall<type T>
+T *last(struct Node<T> *n) {
+	while (n->next)
+		n = n->next;
+	return n->val;
+}
+
+forall<type T> T *id(T *p);
+forall<type U> U *id(U *p) {
+	return p;
+}
+
+int *maxp(int *, int *);
+
+int f(void) {
+	Add<int *> vt = {.add = maxp};
+	int x = 1, y = 2;
+	struct Node<int> n2 = {&y, 0}, n1 = {&x, &n2};
+	const int c = 7;
+	const int *pc = id(&c);
+	return *add<int>(&x, &y, vt) + *add(&x, &y, vt) + *last(&n1) + *pc;
+}

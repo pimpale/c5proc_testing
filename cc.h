@@ -3,6 +3,8 @@
 struct func;
 struct funcctx;
 struct stmt;
+struct generic;
+struct genarg;
 
 enum tokenkind {
 #define TOKEN(t, s) t,
@@ -58,6 +60,8 @@ enum typekind {
 	TYPEUNION,
 	TYPENULLPTR,
 	TYPEBITINT,
+	/* parameter of a generic or template declaration */
+	TYPEPARAM,
 };
 
 enum typeprop {
@@ -116,7 +120,19 @@ struct type {
 		struct {
 			char *tag;
 			struct member *members;
+			/*
+			generic struct this is an instance of, and its
+			arguments (for the generic struct itself, the
+			arguments are its own parameters)
+			*/
+			struct generic *gen;
+			struct genarg *genargs;
 		} structunion;
+		struct {
+			struct generic *gen;
+			size_t index;
+			char *name;
+		} param;
 	} u;
 };
 
@@ -167,6 +183,8 @@ struct decl {
 	bool defined;
 	bool tentative;
 	struct decl *next;
+	/* parameters, if this is a generic or template declaration */
+	struct generic *gen;
 
 	union {
 		struct {
@@ -245,6 +263,8 @@ struct expr {
 	union {
 		struct {
 			struct decl *decl;
+			/* explicit arguments of a generic function whose arguments are not all known */
+			struct genarg *genargs;
 		} ident;
 		union {
 			unsigned long long u;
@@ -357,6 +377,41 @@ extern struct type typefloat, typedouble, typeldouble;
 extern struct type typenullptr;
 extern struct type typeauto;
 extern struct type *typeadjvalist;
+
+/* generic */
+
+struct genparam {
+	char *name;
+	/* TYPEPARAM type for the parameter */
+	struct type *type;
+};
+
+/* parameters of a generic or template declaration */
+struct generic {
+	bool ismono;
+	size_t nparam;
+	struct genparam *params;
+	/* the generic type, for generic structs and typedefs */
+	struct type *pattern;
+	/* instantiations of the pattern */
+	struct geninst *insts;
+};
+
+/* argument for a generic parameter; a NULL type is not yet known */
+struct genarg {
+	struct type *type;
+	enum typequal qual;
+};
+
+struct generic *mkgeneric(bool);
+struct type *mkparamtype(struct generic *, size_t, char *);
+bool typehasparam(struct type *, struct generic *);
+struct type *typesubst(struct type *, enum typequal *, struct generic *, struct genarg *);
+struct type *geninst(struct generic *, struct genarg *, enum typequal *);
+bool genunify(struct generic *, struct genarg *, struct type *, enum typequal, struct type *, enum typequal);
+struct genarg *genargs(struct scope *, struct generic *, bool);
+struct genarg *genidentity(struct generic *);
+void closeangle(void);
 
 /* targ */
 

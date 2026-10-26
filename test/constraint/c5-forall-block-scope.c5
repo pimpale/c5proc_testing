@@ -1,0 +1,1 @@
+void f(void) { forall<type T> typedef T *P; }

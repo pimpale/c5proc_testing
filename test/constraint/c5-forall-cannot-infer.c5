@@ -1,0 +1,2 @@
+forall<type T> T *g(void);
+void f(void) { g(); }

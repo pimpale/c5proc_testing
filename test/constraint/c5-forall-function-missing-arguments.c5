@@ -1,0 +1,2 @@
+forall<type T> T *g(T *);
+void f(void) { int *(*fp)(int *) = g; }

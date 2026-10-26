@@ -857,6 +857,12 @@ genref(struct scope *s, struct expr *e)
 	size_t i;
 
 	d = e->u.ident.decl;
+	if (d->kind == DECLOBJECT) {
+		if (tok.kind != TLESS)
+			error(&tok.loc, "polymorphic variable '%s' requires type arguments", d->name);
+		genbind(e, genargs(s, d->gen, false));
+		return;
+	}
 	if (tok.kind == TLESS) {
 		args = genargs(s, d->gen, true);
 		e->u.ident.genargs = args;
@@ -889,10 +895,11 @@ genbind(struct expr *e, struct genarg *args)
 	e->u.ident.genargs = args;
 	q = QUALNONE;
 	e->type = typesubst(d->type, &q, d->gen, args);
+	e->qual |= q;
 	if (!d->gen->ismono)
 		return;
 	if (argshaveparam(d->gen, args, false))
-		error(&tok.loc, "mono function '%s' cannot be instantiated with erased type parameters", d->name);
+		error(&tok.loc, "mono %s '%s' cannot be instantiated with erased type parameters", d->kind == DECLFUNC ? "function" : "variable", d->name);
 	if (!argshaveparam(d->gen, args, true))
 		e->u.ident.decl = monoinst(d, args);
 }

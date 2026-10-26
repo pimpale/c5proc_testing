@@ -1,0 +1,2 @@
+mono forall<type T> T zero;
+int f(void) { return zero; }

@@ -1364,13 +1364,36 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 			}
 			break;
 		case DECLOBJECT:
-			if (gen)
-				error(&tok.loc, "forall variables are not yet implemented");
 			if (align && align < t->align)
 				error(&tok.loc, "object '%s' requires alignment %d, which is stricter than specified alignment %d", name, t->align, align);
+			if (gen && !gen->name)
+				gen->name = name;
 			d = declcommon(s, kind, name, asmname, t, tq, sc, prior);
+			if (gen && !prior)
+				d->gen = gen;
+			if (gen && !gen->ismono != !d->gen->ismono)
+				error(&tok.loc, "'%s' redeclared with different mono and erased behavior", name);
 			if (d->u.obj.align < align)
 				d->u.obj.align = align;
+			if (gen && gen->ismono) {
+				/* the initializer is instantiated for each set of arguments */
+				if (asmname)
+					error(&tok.loc, "mono variable '%s' cannot have an assembler label", name);
+				d->u.obj.storage = SDSTATIC;
+				if (autoinit || consume(TASSIGN)) {
+					if (d->defined)
+						error(&tok.loc, "object '%s' redefined", name);
+					d->u.obj.geninit = autoinit ? autoinit : parseinit(ls, qt.type);
+					d->u.obj.deftype = qt.type;
+					d->u.obj.defgen = gen;
+					d->defined = true;
+				} else if (!(sc & SCEXTERN) && !d->defined) {
+					d->u.obj.deftype = qt.type;
+					d->u.obj.defgen = gen;
+					d->defined = true;
+				}
+				break;
+			}
 			if (d->linkage == LINKNONE && !(sc & SCSTATIC)) {
 				d->u.obj.storage = SDAUTO;
 			} else {

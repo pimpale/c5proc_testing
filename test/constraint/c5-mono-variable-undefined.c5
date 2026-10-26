@@ -1,0 +1,2 @@
+mono forall<type T> extern T zero;
+int f(void) { return zero<int>; }

@@ -1,0 +1,26 @@
+forall<type T>
+typedef struct {
+	int (*eq)(const T *, const T *);
+} Eq;
+
+mono forall<type T>
+int byte_eq(const T *a, const T *b);
+
+mono forall<type T>
+const Eq<T> BYTE_EQ = {.eq = byte_eq<T>};
+
+mono forall<type T>
+unsigned long SIZE = sizeof(T) * 2;
+
+forall<type T>
+T *last;
+
+int f(int *x) {
+	last<int> = x;
+	return BYTE_EQ<long>.eq(0, 0) + SIZE<char>;
+}
+
+mono forall<type T>
+int byte_eq(const T *a, const T *b) {
+	return a == b;
+}

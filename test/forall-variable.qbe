@@ -1,0 +1,33 @@
+export
+function w $f(l %.1) {
+@start.1
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.2
+	%.3 =l loadl %.2
+	storel %.3, extern $last
+	%.4 =l extsw 0
+	%.5 =l extsw 0
+	%.6 =l add $"BYTE_EQ<long>", 0
+	%.7 =l loadl %.6
+	%.8 =w call %.7(l %.4, l %.5)
+	%.9 =l extsw %.8
+	%.10 =l loadl $"SIZE<char>"
+	%.11 =l add %.9, %.10
+	ret %.11
+}
+data $"BYTE_EQ<long>" = align 8 { l $"byte_eq<long>", }
+data $"SIZE<char>" = align 8 { l 2, }
+function w $"byte_eq<long>"(l %.1, l %.3) {
+@start.3
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+@body.4
+	%.5 =l loadl %.2
+	%.6 =l loadl %.4
+	%.7 =w ceql %.5, %.6
+	ret %.7
+}
+export data $last = align 8 { z 8 }

@@ -207,6 +207,15 @@ struct decl {
 			enum storageduration storage;
 			/* a static local of a mono function, which each instance has its own copy of */
 			bool mono;
+			/*
+			for mono variables, the definition, which is
+			instantiated for each set of arguments: the
+			initializer, and the type and parameters it was
+			parsed with
+			*/
+			struct init *geninit;
+			struct type *deftype;
+			struct generic *defgen;
 		} obj;
 		struct {
 			/* the function might have an "inline definition" (C11 6.7.4p7) */

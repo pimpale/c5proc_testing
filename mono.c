@@ -149,10 +149,16 @@ monoinst(struct decl *d, struct genarg *args)
 	q = QUALNONE;
 	t = typesubst(d->type, &q, d->gen, args);
 	/* XXX: instances should be shared between translation units */
-	n = mkdecl(name, DECLFUNC, t, d->qual | q, LINKINTERN);
+	n = mkdecl(name, d->kind, t, d->qual | q, LINKINTERN);
 	n->asmname = name;
+	if (d->kind == DECLFUNC) {
+		n->u.func.isnoreturn = d->u.func.isnoreturn;
+	} else {
+		n->u.obj.storage = SDSTATIC;
+		if (n->u.obj.align < d->u.obj.align)
+			n->u.obj.align = d->u.obj.align;
+	}
 	n->value = mkglobal(n);
-	n->u.func.isnoreturn = d->u.func.isnoreturn;
 	n->defined = true;
 
 	i = xmalloc(sizeof(*i));
@@ -313,7 +319,7 @@ copyexpr(struct copy *c, struct expr *e)
 	switch (e->kind) {
 	case EXPRIDENT:
 		d = e->u.ident.decl;
-		if (d->gen && d->kind == DECLFUNC && e->u.ident.genargs) {
+		if (d->gen && e->u.ident.genargs) {
 			args = xreallocarray(NULL, d->gen->nparam, sizeof(*args));
 			for (i = 0; i < d->gen->nparam; ++i) {
 				args[i].qual = e->u.ident.genargs[i].qual;
@@ -510,6 +516,33 @@ constsubst(struct expr *e, struct generic *g, struct genarg *args)
 	return e;
 }
 
+/* define an instance of a mono variable */
+static void
+instobj(struct inst *i)
+{
+	struct decl *d;
+	struct copy c;
+	struct init *init;
+
+	d = i->decl;
+	if (!d->u.obj.deftype)
+		error(&i->loc, "mono variable '%s' is used but not defined in this translation unit", d->name);
+	curinst = i;
+	memset(&c, 0, sizeof(c));
+	c.gen = d->u.obj.defgen;
+	c.args = i->args;
+	if (i->inst->type->incomplete)
+		error(&i->loc, "object '%s' has incomplete type", i->inst->name);
+	if (i->inst->u.obj.align < i->inst->type->align)
+		i->inst->u.obj.align = i->inst->type->align;
+	init = copyinit(&c, d->u.obj.geninit, d->u.obj.deftype, i->inst->type);
+	emitdata(i->inst, init);
+	ptrfree(&c.decls);
+	ptrfree(&c.exprs);
+	ptrfree(&c.stmts);
+	curinst = NULL;
+}
+
 static void
 instantiate(struct inst *i)
 {
@@ -522,6 +555,10 @@ instantiate(struct inst *i)
 	enum typequal q;
 
 	d = i->decl;
+	if (d->kind == DECLOBJECT) {
+		instobj(i);
+		return;
+	}
 	if (!d->u.func.body)
 		error(&i->loc, "mono function '%s' is used but not defined in this translation unit", d->name);
 	curinst = i;

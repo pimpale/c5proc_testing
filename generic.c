@@ -6,8 +6,6 @@
 #include "util.h"
 #include "cc.h"
 
-static void layout(struct type *);
-
 struct geninst {
 	struct genarg *args;
 	struct type *type;
@@ -291,40 +289,12 @@ geninst(struct generic *g, struct genarg *args, enum typequal *tq)
 			t->size = 0;
 			t->align = 0;
 		} else {
-			layout(t);
+			structlayout(t, p);
 		}
 	}
 	return t;
 }
 
-/* compute the layout of a mono struct or union instance */
-static void
-layout(struct type *t)
-{
-	struct member *m;
-	unsigned long long off;
-
-	t->size = 0;
-	t->align = 1;
-	for (m = t->u.structunion.members; m; m = m->next) {
-		if (m->bits.before || m->bits.after)
-			error(&tok.loc, "bit-fields in mono structs are not yet supported");
-		if (m->type->incomplete && !(m->type->kind == TYPEARRAY && !m->next))
-			error(&tok.loc, "member of mono %s has incomplete type", t->kind == TYPESTRUCT ? "struct" : "union");
-		if (m->type->align > t->align)
-			t->align = m->type->align;
-		if (t->kind == TYPESTRUCT) {
-			off = ALIGNUP(t->size, m->type->align);
-			m->offset = off;
-			t->size = off + m->type->size;
-		} else {
-			m->offset = 0;
-			if (m->type->size > t->size)
-				t->size = m->type->size;
-		}
-	}
-	t->size = ALIGNUP(t->size, t->align);
-}
 
 /*
 Unify the parameter type p with the argument type a, binding the

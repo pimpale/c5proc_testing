@@ -1203,6 +1203,10 @@ postfixexpr(struct scope *s, struct expr *r)
 				e = mkexpr(EXPRBITFIELD, r->type, r);
 				e->lvalue = lvalue;
 				e->u.bitfield.bits = m->bits;
+				if (typedep(t)) {
+					e->u.bitfield.type = t;
+					e->u.bitfield.member = m->name;
+				}
 			} else {
 				e = r;
 			}

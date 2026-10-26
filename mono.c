@@ -299,6 +299,17 @@ copyexpr(struct copy *c, struct expr *e)
 	case EXPRCALL:
 		n->u.call.args = copyexprs(c, e->u.call.args);
 		break;
+	case EXPRBITFIELD:
+		if (e->u.bitfield.type) {
+			unsigned long long off = 0;
+			struct member *m;
+
+			q = QUALNONE;
+			m = typemember(copytype(c, e->u.bitfield.type, &q), e->u.bitfield.member, &off);
+			n->u.bitfield.bits = m->bits;
+			n->u.bitfield.type = NULL;
+		}
+		break;
 	case EXPRCOMPOUND:
 		n->u.compound.decl = copydecl(c, e->u.compound.decl);
 		n->u.compound.init = copyinit(c, e->u.compound.init, e->u.compound.decl->type, n->u.compound.decl->type);

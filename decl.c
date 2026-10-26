@@ -65,9 +65,12 @@ enum funcspec {
 struct structbuilder {
 	struct type *type;
 	struct member **last;
+	struct structitem **lastitem;
 	unsigned bits;  /* number of bits remaining in the last byte */
 	bool pack;
 };
+
+static void placemember(struct structbuilder *, struct member *, struct type *, char *, int, unsigned long long);
 
 struct decl *
 mkdecl(char *name, enum declkind k, struct type *t, enum typequal tq, enum linkage linkage)
@@ -261,8 +264,10 @@ tagspec(struct scope *s)
 	case TYPEUNION:
 		b.type = t;
 		b.last = &t->u.structunion.members;
+		b.lastitem = &t->u.structunion.items;
 		b.bits = 0;
 		b.pack = a.kind & ATTRPACKED;
+		t->u.structunion.packed = b.pack;
 		do structdecl(s, &b);
 		while (tok.kind != TRBRACE);
 		if (!t->u.structunion.members)
@@ -830,7 +835,7 @@ addmember(struct structbuilder *b, struct qualtype mt, char *name, int align, un
 {
 	struct type *t = b->type;
 	struct member *m;
-	size_t end;
+	struct structitem *item;
 
 	if (t->kind == TYPESTRUCT && t->prop & PROPFLEX)
 		error(&tok.loc, "struct has member '%s' after flexible array member", name);
@@ -865,27 +870,47 @@ addmember(struct structbuilder *b, struct qualtype mt, char *name, int align, un
 	} else {
 		m = NULL;
 	}
+	if (t->u.structunion.gen && t->u.structunion.gen->ismono) {
+		item = xmalloc(sizeof(*item));
+		item->member = m;
+		item->type = mt.type;
+		item->align = align;
+		item->width = width;
+		item->next = NULL;
+		*b->lastitem = item;
+		b->lastitem = &item->next;
+	}
+	placemember(b, m, mt.type, name, align, width);
+}
+
+/* place a member (or unnamed bit-field, if m is NULL) in the struct being built */
+static void
+placemember(struct structbuilder *b, struct member *m, struct type *mt, char *name, int align, unsigned long long width)
+{
+	struct type *t = b->type;
+	size_t end;
+
 	if (width == -1) {
 		m->bits.before = 0;
 		m->bits.after = 0;
-		if (align < mt.type->align) {
+		if (align < mt->align) {
 			if (align)
 				error(&tok.loc, "specified alignment of struct member '%s' is less strict than is required by type", name);
-			align = b->pack ? 1 : mt.type->align;
+			align = b->pack ? 1 : mt->align;
 		}
 		if (!align)
 			align = 1;
 		if (t->kind == TYPESTRUCT) {
 			m->offset = ALIGNUP(t->size, align);
-			t->size = m->offset + mt.type->size;
+			t->size = m->offset + mt->size;
 		} else {
 			m->offset = 0;
-			if (t->size < mt.type->size)
-				t->size = mt.type->size;
+			if (t->size < mt->size)
+				t->size = mt->size;
 		}
 		b->bits = 0;
 	} else {  /* bit-field */
-		if (!(mt.type->prop & PROPINT))
+		if (!(mt->prop & PROPINT))
 			error(&tok.loc, "bit-field '%s' has invalid type", name);
 		if (align)
 			error(&tok.loc, "alignment specified for bit-field '%s'", name);
@@ -893,30 +918,30 @@ addmember(struct structbuilder *b, struct qualtype mt, char *name, int align, un
 			error(&tok.loc, "bit-field '%s' in packed struct is not supported", name);
 		if (!width && name)
 			error(&tok.loc, "bit-field '%s' with zero width must not have declarator", name);
-		if (width > mt.type->u.arith.width)
+		if (width > mt->u.arith.width)
 			error(&tok.loc, "bit-field '%s' exceeds width of underlying type", name);
-		align = mt.type->align;
+		align = mt->align;
 		if (t->kind == TYPESTRUCT) {
 			/* calculate end of the storage-unit for this bit-field */
-			end = ALIGNUP(t->size, mt.type->size);
+			end = ALIGNUP(t->size, mt->size);
 			if (!width || width > (end - t->size) * 8 + b->bits) {
 				/* no room, allocate a new storage-unit */
 				t->size = end;
 				b->bits = 0;
 			}
 			if (m) {
-				m->offset = ALIGNDOWN(t->size - !!b->bits, mt.type->size);
+				m->offset = ALIGNDOWN(t->size - !!b->bits, mt->size);
 				m->bits.before = (t->size - m->offset) * 8 - b->bits;
-				m->bits.after = mt.type->size * 8 - width - m->bits.before;
+				m->bits.after = mt->size * 8 - width - m->bits.before;
 			}
 			t->size += (width - b->bits + 7) / 8;
 			b->bits = (b->bits - width) % 8;
 		} else if (m) {
 			m->offset = 0;
 			m->bits.before = 0;
-			m->bits.after = mt.type->size * 8 - width;
-			if (t->size < mt.type->size)
-				t->size = mt.type->size;
+			m->bits.after = mt->size * 8 - width;
+			if (t->size < mt->size)
+				t->size = mt->size;
 		}
 	}
 	if (m && t->align < align)
@@ -1419,6 +1444,37 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 		expect(TCOMMA, "or ';' after declarator");
 		allowfunc = 0;
 	}
+}
+
+/*
+Compute the layout of an instance of a mono struct or union from the
+fields of the pattern it was instantiated from.
+*/
+void
+structlayout(struct type *t, struct type *pattern)
+{
+	struct structbuilder b;
+	struct structitem *item;
+	struct member *pm, *m;
+
+	b.type = t;
+	b.bits = 0;
+	b.pack = pattern->u.structunion.packed;
+	t->size = 0;
+	t->align = 0;
+	for (item = pattern->u.structunion.items; item; item = item->next) {
+		m = NULL;
+		if (item->member) {
+			/* the instance's members correspond to the pattern's in order */
+			for (pm = pattern->u.structunion.members, m = t->u.structunion.members; pm != item->member; pm = pm->next)
+				m = m->next;
+		}
+		if (m && m->type->incomplete && !(m->type->kind == TYPEARRAY && !m->next))
+			error(&tok.loc, "member '%s' of mono %s instance has incomplete type", m->name, t->kind == TYPESTRUCT ? "struct" : "union");
+		placemember(&b, m, m ? m->type : item->type, m ? m->name : NULL, item->align, item->width);
+	}
+	if (!b.pack)
+		t->size = ALIGNUP(t->size, t->align);
 }
 
 struct decl *

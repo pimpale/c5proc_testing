@@ -91,6 +91,16 @@ struct member {
 	struct member *next;
 };
 
+/* a field of a mono struct: a member, or an unnamed bit-field (with a NULL member) */
+struct structitem {
+	struct member *member;
+	struct type *type;
+	int align;
+	/* bit-field width, or -1 */
+	unsigned long long width;
+	struct structitem *next;
+};
+
 struct type {
 	enum typekind kind;
 	enum typeprop prop;
@@ -127,6 +137,9 @@ struct type {
 			*/
 			struct generic *gen;
 			struct genarg *genargs;
+			/* for mono structs, the fields to lay out for each instance */
+			struct structitem *items;
+			bool packed;
 		} structunion;
 		struct {
 			struct generic *gen;
@@ -298,6 +311,9 @@ struct expr {
 		} call;
 		struct {
 			struct bitfield bits;
+			/* for structs depending on mono parameters, the member, whose bits are computed for each instance */
+			struct type *type;
+			char *member;
 		} bitfield;
 		struct {
 			struct decl *decl;
@@ -504,6 +520,7 @@ bool decl(struct scope *, struct funcctx *, struct stmt ***);
 struct type *typename(struct scope *, enum typequal *, struct expr **);
 
 struct decl *stringdecl(struct expr *);
+void structlayout(struct type *, struct type *);
 
 void emittentativedefns(void);
 

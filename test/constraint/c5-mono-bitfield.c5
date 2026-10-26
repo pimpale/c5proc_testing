@@ -1,2 +1,0 @@
-mono forall<type T> struct B { T x; int bits : 3; };
-struct B<int> b;

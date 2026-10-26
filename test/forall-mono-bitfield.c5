@@ -1,0 +1,18 @@
+mono forall<type T>
+struct S {
+	char c;
+	T x;
+	unsigned a : 3, b : 7;
+	int : 0;
+	unsigned d : 5;
+	alignas(16) char e;
+};
+
+mono forall<type T>
+unsigned getb(struct S<T> *s) {
+	return s->b + s->d;
+}
+
+unsigned long f(struct S<char> *c, struct S<long> *l) {
+	return getb(c) + getb(l) + sizeof(struct S<char>) + sizeof(struct S<long>);
+}

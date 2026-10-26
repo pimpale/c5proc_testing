@@ -192,6 +192,32 @@ advance(struct initparser *p)
 }
 
 /* 6.7.9 Initialization */
+/*
+Parse the initializer of an object whose type depends on mono
+parameters. Since its layout is not known yet, only `{}`, `{0}`, or a
+single expression of the same type are allowed. The result is NULL for
+zero initialization, or a single entry whose end is filled in when the
+type is instantiated.
+*/
+struct init *
+depinit(struct scope *s, struct type *t)
+{
+	struct expr *e;
+
+	if (consume(TLBRACE)) {
+		if (consume(TRBRACE))
+			return NULL;
+		e = eval(assignexpr(s));
+		consume(TCOMMA);
+		if (e->kind != EXPRCONST || !(e->type->prop & PROPINT) || e->u.constant.u != 0 || tok.kind != TRBRACE)
+			error(&tok.loc, "initializer lists for types depending on mono parameters are not yet supported");
+		next();
+		return NULL;
+	}
+	e = exprassign(assignexpr(s), t);
+	return mkinit(0, 0, (struct bitfield){0}, e);
+}
+
 struct init *
 parseinit(struct scope *s, struct type *t)
 {
@@ -207,6 +233,8 @@ parseinit(struct scope *s, struct type *t)
 	p.sub->iscur = false;
 	p.init = NULL;
 	p.last = &p.init;
+	if (typedep(t))
+		error(&tok.loc, "initializer lists for types depending on mono parameters are not yet supported");
 	if (t->incomplete && t->kind != TYPEARRAY)
 		error(&tok.loc, "initializer specified for incomplete type");
 	if (t->kind == TYPEARRAY && t->base->size == 0)

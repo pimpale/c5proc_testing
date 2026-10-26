@@ -63,6 +63,7 @@ main(int argc, char *argv[])
 				error(&tok.loc, "expected declaration or function definition");
 			}
 		}
+		emitmonoinsts();
 		emittentativedefns();
 	}
 

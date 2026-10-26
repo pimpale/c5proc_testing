@@ -1,0 +1,1 @@
+mono forall<type T> void f(void) { static T x; }

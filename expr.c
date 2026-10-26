@@ -22,6 +22,7 @@ mkexpr(enum exprkind k, struct type *t, struct expr *b)
 	e->base = b;
 	e->next = NULL;
 	e->toeval = NULL;
+	memset(&e->u, 0, sizeof(e->u));
 
 	return e;
 }
@@ -220,6 +221,10 @@ exprassign(struct expr *e, struct type *t)
 		if (!typecompatible(t, et))
 			error(&tok.loc, "assignment to %s type must be from compatible type", t->kind == TYPEUNION ? "union" : "struct");
 		break;
+	case TYPEPARAM:
+		if (t != et)
+			error(&tok.loc, "assignment to type parameter '%s' must be from the same type", t->u.param.name);
+		break;
 	default:
 		assert(t->prop & PROPARITH);
 		if (!(et->prop & PROPARITH))
@@ -250,11 +255,26 @@ commonreal(struct expr **e1, struct expr **e2)
 	return t;
 }
 
+/* a layout quantity of a type depending on mono parameters, computed when it is instantiated */
+static struct expr *
+mklayoutexpr(enum layoutkind kind, struct type *t, char *member)
+{
+	struct expr *e;
+
+	e = mkexpr(EXPRLAYOUT, &typeulong, NULL);
+	e->u.layout.kind = kind;
+	e->u.layout.type = t;
+	e->u.layout.member = member;
+	return e;
+}
+
 static struct expr *
 mksizeofexpr(struct type *t) {
 	struct expr *e;
 
-	if (t->kind == TYPEARRAY && t->size == 0) {
+	if (typedep(t)) {
+		e = mklayoutexpr(LAYOUTSIZE, t, NULL);
+	} else if (t->kind == TYPEARRAY && t->size == 0) {
 		e = mkexpr(EXPRSIZEOF, &typeulong, NULL);
 		e->u.szof.type = t;
 	} else {
@@ -699,6 +719,7 @@ generic(struct scope *s)
 
 /* 6.5 Expressions */
 static void genref(struct scope *, struct expr *);
+static void genbind(struct expr *, struct genarg *);
 
 static struct expr *
 primaryexpr(struct scope *s)
@@ -833,25 +854,47 @@ genref(struct scope *s, struct expr *e)
 {
 	struct decl *d;
 	struct genarg *args;
-	enum typequal q;
 	size_t i;
 
 	d = e->u.ident.decl;
 	if (tok.kind == TLESS) {
 		args = genargs(s, d->gen, true);
+		e->u.ident.genargs = args;
 		for (i = 0; i < d->gen->nparam; ++i) {
 			if (!args[i].type)
 				break;
 		}
 		if (i == d->gen->nparam) {
-			q = QUALNONE;
-			e->type = typesubst(d->type, &q, d->gen, args);
+			genbind(e, args);
 			return;
 		}
-		e->u.ident.genargs = args;
 	}
 	if (tok.kind != TLPAREN)
 		error(&tok.loc, "polymorphic function '%s' requires type arguments", d->name);
+}
+
+/*
+Give a reference to a polymorphic function its type for the arguments.
+A mono function with known arguments refers to the instance for them;
+inside a mono function, arguments depending on its parameters are
+substituted when it is instantiated.
+*/
+static void
+genbind(struct expr *e, struct genarg *args)
+{
+	struct decl *d;
+	enum typequal q;
+
+	d = e->u.ident.decl;
+	e->u.ident.genargs = args;
+	q = QUALNONE;
+	e->type = typesubst(d->type, &q, d->gen, args);
+	if (!d->gen->ismono)
+		return;
+	if (argshaveparam(d->gen, args, false))
+		error(&tok.loc, "mono function '%s' cannot be instantiated with erased type parameters", d->name);
+	if (!argshaveparam(d->gen, args, true))
+		e->u.ident.decl = monoinst(d, args);
 }
 
 /*
@@ -867,7 +910,6 @@ geninfer(struct scope *s, struct expr *r, struct expr **args)
 	struct genarg *bind;
 	struct expr *a, **end;
 	struct type *t;
-	enum typequal q;
 	size_t i;
 
 	d = r->base->u.ident.decl;
@@ -894,10 +936,8 @@ geninfer(struct scope *s, struct expr *r, struct expr **args)
 		if (!bind[i].type)
 			error(&tok.loc, "cannot infer type parameter '%s' of '%s'", g->params[i].name, d->name);
 	}
-	q = QUALNONE;
-	t = typesubst(t, &q, g, bind);
-	r->base->type = t;
-	r->type = mkpointertype(t, QUALNONE);
+	genbind(r->base, bind);
+	r->type = mkpointertype(r->base->type, QUALNONE);
 }
 
 /* TODO: merge with init.c:designator() */
@@ -1145,6 +1185,8 @@ postfixexpr(struct scope *s, struct expr *r)
 			tq = r->type->qual;
 			if (t->kind != TYPESTRUCT && t->kind != TYPEUNION)
 				error(&tok.loc, "'%s' operator must be applied to pointer to struct/union", tokenstr(op));
+			if (t->incomplete)
+				error(&tok.loc, "'%s' operator applied to incomplete struct/union type", tokenstr(op));
 			next();
 			if (tok.kind < TIDENT)
 				error(&tok.loc, "expected identifier after '%s' operator", tokenstr(op));
@@ -1153,7 +1195,7 @@ postfixexpr(struct scope *s, struct expr *r)
 			m = typemember(t, tokenstr(tok.kind), &offset);
 			if (!m)
 				error(&tok.loc, "struct/union has no member named '%s'", tok.lit);
-			r = mkbinaryexpr(&tok.loc, TADD, exprconvert(r, &typeulong), mkconstexpr(&typeulong, offset));
+			r = mkbinaryexpr(&tok.loc, TADD, exprconvert(r, &typeulong), typedep(t) ? mklayoutexpr(LAYOUTOFFSET, t, m->name) : mkconstexpr(&typeulong, offset));
 			r->type = mkpointertype(m->type, tq | m->qual);
 			r = mkunaryexpr(TMUL, r);
 			r->lvalue = lvalue;
@@ -1267,7 +1309,9 @@ unaryexpr(struct scope *s)
 			error(&tok.loc, "%s operator applied to incomplete type", tokenstr(op));
 		if (t->kind == TYPEFUNC)
 			error(&tok.loc, "%s operator applied to function type", tokenstr(op));
-		if (t->kind == TYPEARRAY && t->size == 0 && op == TSIZEOF) {
+		if (typedep(t)) {
+			e = mklayoutexpr(op == TSIZEOF ? LAYOUTSIZE : LAYOUTALIGN, t, NULL);
+		} else if (t->kind == TYPEARRAY && t->size == 0 && op == TSIZEOF) {
 			e = mkexpr(EXPRSIZEOF, &typeulong, e);
 			e->u.szof.type = t;
 		} else {

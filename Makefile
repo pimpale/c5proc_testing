@@ -31,6 +31,7 @@ SRC=\
 	init.c\
 	lower.c\
 	main.c\
+	mono.c\
 	map.c\
 	pp.c\
 	scan.c\
@@ -62,6 +63,7 @@ $(objdir)/init.o    : init.c    $(HDR)          $(stagedeps) ; $(CC) $(CFLAGS) -
 $(objdir)/lower.o   : lower.c   $(HDR)          $(stagedeps) ; $(CC) $(CFLAGS) -c -o $@ lower.c
 $(objdir)/main.o    : main.c    $(HDR) arg.h    $(stagedeps) ; $(CC) $(CFLAGS) -c -o $@ main.c
 $(objdir)/map.o     : map.c     util.h          $(stagedeps) ; $(CC) $(CFLAGS) -c -o $@ map.c
+$(objdir)/mono.o    : mono.c    $(HDR)          $(stagedeps) ; $(CC) $(CFLAGS) -c -o $@ mono.c
 $(objdir)/pp.o      : pp.c      $(HDR)          $(stagedeps) ; $(CC) $(CFLAGS) -c -o $@ pp.c
 $(objdir)/qbe.o     : qbe.c     $(HDR) ops.h    $(stagedeps) ; $(CC) $(CFLAGS) -c -o $@ qbe.c
 $(objdir)/scan.o    : scan.c    $(HDR)          $(stagedeps) ; $(CC) $(CFLAGS) -c -o $@ scan.c

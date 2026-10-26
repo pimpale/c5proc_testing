@@ -1,0 +1,1 @@
+error: member 'a' with type depending on mono parameters requires a mono forall struct

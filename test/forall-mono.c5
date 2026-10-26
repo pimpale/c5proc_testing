@@ -1,0 +1,52 @@
+forall<type T>
+typedef struct {
+	T (*add)(T, T);
+} Add;
+
+mono forall<type T>
+T add(T a, T b, Add<T> vt) {
+	return vt.add(a, b);
+}
+
+mono forall<type T>
+void swap(T *a, T *b) {
+	T tmp = *a;
+	*a = *b;
+	*b = tmp;
+}
+
+mono forall<type T>
+void swap2(T *a, T *b) {
+	swap(a, b);
+	swap<T>(a, b);
+}
+
+mono forall<type T>
+struct Pair {
+	char tag;
+	T first;
+	T second;
+};
+
+mono forall<type T>
+T *second(struct Pair<T> *p, unsigned long i) {
+	return &p->second + i;
+}
+
+mono forall<type T>
+unsigned long size(void) {
+	return sizeof(T) + sizeof(struct Pair<T>) + _Alignof(T);
+}
+
+struct big {
+	long a, b, c;
+};
+
+struct big badd(struct big, struct big);
+
+void f(struct big *b, struct Pair<short> *p, Add<struct big> vt) {
+	swap2(b, b + 1);
+	b[2] = add(b[0], b[1], vt);
+	second(p, 1);
+	size<struct big>();
+}

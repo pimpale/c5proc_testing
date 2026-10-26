@@ -1,0 +1,2 @@
+mono forall<type T> void f(void) { struct Vec2 { T a; } v; }
+void g(void) { f<int>(); }

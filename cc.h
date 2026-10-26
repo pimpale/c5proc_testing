@@ -196,6 +196,16 @@ struct decl {
 			/* the function might have an "inline definition" (C11 6.7.4p7) */
 			bool inlinedefn;
 			bool isnoreturn;
+			/*
+			for mono functions, the definition, which is
+			instantiated for each set of arguments: the body,
+			the type and parameters it was parsed with, and the
+			placeholder for __func__
+			*/
+			struct stmt *body;
+			struct type *deftype;
+			struct generic *defgen;
+			struct decl *namedecl;
 		} func;
 		unsigned long long enumconst;
 		enum builtinkind builtin;
@@ -239,6 +249,14 @@ enum exprkind {
 	EXPRBUILTIN,
 	EXPRTEMP,
 	EXPRSIZEOF,
+	/* size, alignment, or member offset of a type depending on mono parameters */
+	EXPRLAYOUT,
+};
+
+enum layoutkind {
+	LAYOUTSIZE,
+	LAYOUTALIGN,
+	LAYOUTOFFSET,
 };
 
 struct stringlit {
@@ -301,6 +319,11 @@ struct expr {
 		struct {
 			struct type *type;
 		} szof;
+		struct {
+			enum layoutkind kind;
+			struct type *type;
+			char *member;
+		} layout;
 		struct value *temp;
 	} u;
 };
@@ -386,9 +409,11 @@ struct genparam {
 	struct type *type;
 };
 
-/* parameters of a generic or template declaration */
+/* parameters of a forall declaration */
 struct generic {
 	bool ismono;
+	/* name of the declared entity, for instance names */
+	char *name;
 	size_t nparam;
 	struct genparam *params;
 	/* the generic type, for generic structs and typedefs */
@@ -406,12 +431,21 @@ struct genarg {
 struct generic *mkgeneric(bool);
 struct type *mkparamtype(struct generic *, size_t, char *);
 bool typehasparam(struct type *, struct generic *);
+bool typehasparamkind(struct type *, bool);
+bool typedep(struct type *);
+bool argshaveparam(struct generic *, struct genarg *, bool);
+char *geninstname(struct generic *, struct genarg *);
 struct type *typesubst(struct type *, enum typequal *, struct generic *, struct genarg *);
 struct type *geninst(struct generic *, struct genarg *, enum typequal *);
 bool genunify(struct generic *, struct genarg *, struct type *, enum typequal, struct type *, enum typequal);
 struct genarg *genargs(struct scope *, struct generic *, bool);
 struct genarg *genidentity(struct generic *);
 void closeangle(void);
+
+/* mono */
+
+struct decl *monoinst(struct decl *, struct genarg *);
+void emitmonoinsts(void);
 
 /* targ */
 
@@ -493,6 +527,7 @@ struct expr *eval(struct expr *);
 
 struct init *mkinit(unsigned long long, unsigned long long, struct bitfield, struct expr *);
 struct init *parseinit(struct scope *, struct type *);
+struct init *depinit(struct scope *, struct type *);
 
 
 /* backend */
@@ -509,6 +544,8 @@ struct switchcases {
 struct funcctx {
 	/* type of the function being defined */
 	struct type *type;
+	/* whether the function is mono, so is instantiated rather than lowered */
+	bool mono;
 	/* labels defined in the function, and goto statements to resolve */
 	struct map labels;
 	struct stmt *gotos;

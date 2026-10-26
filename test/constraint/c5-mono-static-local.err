@@ -1,0 +1,1 @@
+error: static local variables in mono functions are not yet supported

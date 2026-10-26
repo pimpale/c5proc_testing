@@ -1,9 +1,12 @@
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "util.h"
 #include "cc.h"
+
+static void layout(struct type *);
 
 struct geninst {
 	struct genarg *args;
@@ -29,8 +32,12 @@ mkparamtype(struct generic *g, size_t index, char *name)
 	struct type *t;
 
 	t = mktype(TYPEPARAM, 0);
-	/* the size of a generic type parameter is never known */
-	t->incomplete = true;
+	/*
+	The size of an erased type parameter is never known. A mono type
+	parameter is complete, but its layout is not known until it is
+	instantiated.
+	*/
+	t->incomplete = !g->ismono;
 	t->u.param.gen = g;
 	t->u.param.index = index;
 	t->u.param.name = name;
@@ -73,6 +80,68 @@ typehasparam(struct type *t, struct generic *g)
 	return false;
 }
 
+/* whether t refers to a parameter of a mono (or erased) declaration */
+bool
+typehasparamkind(struct type *t, bool mono)
+{
+	struct generic *tg;
+	struct decl *p;
+
+	switch (t->kind) {
+	case TYPEPARAM:
+		return t->u.param.gen->ismono == mono;
+	case TYPEPOINTER:
+	case TYPEARRAY:
+		return typehasparamkind(t->base, mono);
+	case TYPEFUNC:
+		if (typehasparamkind(t->base, mono))
+			return true;
+		for (p = t->u.func.params; p; p = p->next) {
+			if (typehasparamkind(p->type, mono))
+				return true;
+		}
+		break;
+	case TYPESTRUCT:
+	case TYPEUNION:
+		tg = t->u.structunion.gen;
+		if (tg && argshaveparam(tg, t->u.structunion.genargs, mono))
+			return true;
+		break;
+	}
+	return false;
+}
+
+bool
+argshaveparam(struct generic *g, struct genarg *args, bool mono)
+{
+	size_t i;
+
+	for (i = 0; i < g->nparam; ++i) {
+		if (typehasparamkind(args[i].type, mono))
+			return true;
+	}
+	return false;
+}
+
+/* whether the layout of t depends on mono parameters, so is not yet known */
+bool
+typedep(struct type *t)
+{
+	struct generic *tg;
+
+	switch (t->kind) {
+	case TYPEPARAM:
+		return t->u.param.gen->ismono;
+	case TYPEARRAY:
+		return typedep(t->base);
+	case TYPESTRUCT:
+	case TYPEUNION:
+		tg = t->u.structunion.gen;
+		return tg && tg->ismono && !t->incomplete && argshaveparam(tg, t->u.structunion.genargs, true);
+	}
+	return false;
+}
+
 /*
 Substitute the arguments `args` for the parameters of g in t.
 Qualifiers of a substituted parameter are added to *tq.
@@ -100,9 +169,15 @@ typesubst(struct type *t, enum typequal *tq, struct generic *g, struct genarg *a
 	case TYPEARRAY:
 		q = t->qual;
 		n = typesubst(t->base, &q, g, args);
-		if (t->incomplete || !t->base->size)
-			return mkarraytype(n, q, 0);
-		return mkarraytype(n, q, t->size / t->base->size);
+		if (t->u.array.length && t->u.array.length->kind == EXPRCONST)
+			n = mkarraytype(n, q, t->u.array.length->u.constant.u);
+		else if (t->incomplete || !t->base->size)
+			n = mkarraytype(n, q, 0);
+		else
+			n = mkarraytype(n, q, t->size / t->base->size);
+		if (typedep(n))
+			n->u.array.length = t->u.array.length;
+		return n;
 	case TYPEFUNC:
 		n = mktype(TYPEFUNC, t->prop);
 		*n = *t;
@@ -208,7 +283,47 @@ geninst(struct generic *g, struct genarg *args, enum typequal *tq)
 		end = &nm->next;
 	}
 	*end = NULL;
+	if (g->ismono) {
+		if (argshaveparam(g, args, false)) {
+			/* the layout depends on an erased parameter, so can never be known */
+			t->incomplete = true;
+		} else if (argshaveparam(g, args, true)) {
+			t->size = 0;
+			t->align = 0;
+		} else {
+			layout(t);
+		}
+	}
 	return t;
+}
+
+/* compute the layout of a mono struct or union instance */
+static void
+layout(struct type *t)
+{
+	struct member *m;
+	unsigned long long off;
+
+	t->size = 0;
+	t->align = 1;
+	for (m = t->u.structunion.members; m; m = m->next) {
+		if (m->bits.before || m->bits.after)
+			error(&tok.loc, "bit-fields in mono structs are not yet supported");
+		if (m->type->incomplete && !(m->type->kind == TYPEARRAY && !m->next))
+			error(&tok.loc, "member of mono %s has incomplete type", t->kind == TYPESTRUCT ? "struct" : "union");
+		if (m->type->align > t->align)
+			t->align = m->type->align;
+		if (t->kind == TYPESTRUCT) {
+			off = ALIGNUP(t->size, m->type->align);
+			m->offset = off;
+			t->size = off + m->type->size;
+		} else {
+			m->offset = 0;
+			if (m->type->size > t->size)
+				t->size = m->type->size;
+		}
+	}
+	t->size = ALIGNUP(t->size, t->align);
 }
 
 /*
@@ -334,4 +449,174 @@ genargs(struct scope *s, struct generic *g, bool allowauto)
 		error(&tok.loc, "too many type arguments");
 	closeangle();
 	return args;
+}
+
+static void
+addstr(struct array *buf, const char *s)
+{
+	arrayaddbuf(buf, s, strlen(s));
+}
+
+static void typestr(struct array *, struct type *, enum typequal, const char *);
+
+static void
+argsstr(struct array *buf, struct generic *g, struct genarg *args)
+{
+	size_t i;
+
+	addstr(buf, "<");
+	for (i = 0; i < g->nparam; ++i) {
+		if (i > 0)
+			addstr(buf, ", ");
+		typestr(buf, args[i].type, args[i].qual, "");
+	}
+	addstr(buf, ">");
+}
+
+static void
+qualstr(struct array *buf, enum typequal q)
+{
+	if (q & QUALCONST)
+		addstr(buf, "const ");
+	if (q & QUALVOLATILE)
+		addstr(buf, "volatile ");
+	if (q & QUALRESTRICT)
+		addstr(buf, "restrict ");
+	if (q & QUALATOMIC)
+		addstr(buf, "_Atomic ");
+}
+
+/*
+Write the canonical spelling of the type t with qualifiers q, as an
+abstract declarator with `inner` in the position of the identifier.
+*/
+static void
+typestr(struct array *buf, struct type *t, enum typequal q, const char *inner)
+{
+	struct array tmp = {0};
+	struct member *m;
+	struct decl *p;
+	char num[32];
+
+	switch (t->kind) {
+	case TYPEPOINTER:
+		if (t->base->kind == TYPEARRAY || t->base->kind == TYPEFUNC)
+			addstr(&tmp, "(*");
+		else
+			addstr(&tmp, "*");
+		if (q & QUALCONST)
+			addstr(&tmp, " const");
+		if (q & QUALVOLATILE)
+			addstr(&tmp, " volatile");
+		if (q & QUALRESTRICT)
+			addstr(&tmp, " restrict");
+		if ((q || *inner && *inner != '*' && *inner != '(' && *inner != '[') && *inner)
+			addstr(&tmp, " ");
+		addstr(&tmp, inner);
+		if (t->base->kind == TYPEARRAY || t->base->kind == TYPEFUNC)
+			addstr(&tmp, ")");
+		arrayaddbuf(&tmp, "", 1);
+		typestr(buf, t->base, t->qual, tmp.val);
+		free(tmp.val);
+		return;
+	case TYPEARRAY:
+		addstr(&tmp, inner);
+		if (t->incomplete) {
+			addstr(&tmp, "[]");
+		} else {
+			snprintf(num, sizeof(num), "[%llu]", t->size / t->base->size);
+			addstr(&tmp, num);
+		}
+		arrayaddbuf(&tmp, "", 1);
+		typestr(buf, t->base, t->qual | q, tmp.val);
+		free(tmp.val);
+		return;
+	case TYPEFUNC:
+		addstr(&tmp, inner);
+		addstr(&tmp, "(");
+		for (p = t->u.func.params; p; p = p->next) {
+			typestr(&tmp, p->type, p->qual, "");
+			if (p->next)
+				addstr(&tmp, ", ");
+		}
+		if (t->u.func.isvararg)
+			addstr(&tmp, t->u.func.params ? ", ..." : "...");
+		else if (!t->u.func.params)
+			addstr(&tmp, "void");
+		addstr(&tmp, ")");
+		arrayaddbuf(&tmp, "", 1);
+		typestr(buf, t->base, t->qual, tmp.val);
+		free(tmp.val);
+		return;
+	}
+	qualstr(buf, q);
+	switch (t->kind) {
+	case TYPEVOID:    addstr(buf, "void"); break;
+	case TYPEBOOL:    addstr(buf, "bool"); break;
+	case TYPECHAR:
+		if (t == &typechar)
+			addstr(buf, "char");
+		else
+			addstr(buf, t->u.arith.issigned ? "signed char" : "unsigned char");
+		break;
+	case TYPESHORT:   addstr(buf, t->u.arith.issigned ? "short" : "unsigned short"); break;
+	case TYPEINT:     addstr(buf, t->u.arith.issigned ? "int" : "unsigned int"); break;
+	case TYPELONG:    addstr(buf, t->u.arith.issigned ? "long" : "unsigned long"); break;
+	case TYPELLONG:   addstr(buf, t->u.arith.issigned ? "long long" : "unsigned long long"); break;
+	case TYPEFLOAT:   addstr(buf, "float"); break;
+	case TYPEDOUBLE:  addstr(buf, "double"); break;
+	case TYPELDOUBLE: addstr(buf, "long double"); break;
+	case TYPENULLPTR: addstr(buf, "nullptr_t"); break;
+	case TYPEBITINT:
+		snprintf(num, sizeof(num), "%s_BitInt(%d)", t->u.arith.issigned ? "" : "unsigned ", t->u.arith.width);
+		addstr(buf, num);
+		break;
+	case TYPEPARAM:
+		addstr(buf, t->u.param.name);
+		break;
+	case TYPEENUM:
+		/* an enum type is compatible with its underlying integer type */
+		switch (t->size) {
+		case 1: addstr(buf, t->u.arith.issigned ? "signed char" : "unsigned char"); break;
+		case 2: addstr(buf, t->u.arith.issigned ? "short" : "unsigned short"); break;
+		case 4: addstr(buf, t->u.arith.issigned ? "int" : "unsigned int"); break;
+		default: addstr(buf, t->u.arith.issigned ? "long" : "unsigned long"); break;
+		}
+		break;
+	case TYPESTRUCT:
+	case TYPEUNION:
+		if (t->u.structunion.gen) {
+			addstr(buf, t->u.structunion.gen->name);
+			argsstr(buf, t->u.structunion.gen, t->u.structunion.genargs);
+		} else if (t->u.structunion.tag) {
+			addstr(buf, t->u.structunion.tag);
+		} else {
+			addstr(buf, t->kind == TYPESTRUCT ? "struct {" : "union {");
+			for (m = t->u.structunion.members; m; m = m->next) {
+				typestr(buf, m->type, m->qual, m->name ? m->name : "");
+				addstr(buf, m->next ? "; " : ";");
+			}
+			addstr(buf, "}");
+		}
+		break;
+	default:
+		fatal("internal error: cannot name type");
+	}
+	if (*inner) {
+		if (*inner != '*' && *inner != '(' && *inner != '[')
+			addstr(buf, " ");
+		addstr(buf, inner);
+	}
+}
+
+/* the canonical name of an instance of g, for example `add<int>` */
+char *
+geninstname(struct generic *g, struct genarg *args)
+{
+	struct array buf = {0};
+
+	addstr(&buf, g->name);
+	argsstr(&buf, g, args);
+	arrayaddbuf(&buf, "", 1);
+	return buf.val;
 }

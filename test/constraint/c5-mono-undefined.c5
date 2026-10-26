@@ -1,0 +1,4 @@
+mono forall<type T> struct Vec { T *data; unsigned long len; };
+mono forall<type T> void swap(T *a, T *b);
+
+void f(void) { int a, b; swap(&a, &b); }

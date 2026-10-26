@@ -242,6 +242,7 @@ tagspec(struct scope *s)
 			t->u.structunion.members = NULL;
 			if (gen) {
 				gen->pattern = t;
+				gen->name = tag;
 				t->u.structunion.gen = gen;
 				t->u.structunion.genargs = genidentity(gen);
 			}
@@ -777,7 +778,12 @@ declarator(struct scope *s, struct qualtype base, char **name, int *align, struc
 			t->size = 0;
 			if (t->u.array.length) {
 				e = eval(t->u.array.length);
-				if (e->kind == EXPRCONST && base.type->size) {
+				if (e->kind == EXPRCONST && typedep(base.type)) {
+					/* the size is computed when the element type is known */
+					if (e->type->u.arith.issigned && e->u.constant.u >> 63)
+						error(&tok.loc, "array length must be non-negative");
+					t->u.array.length = e;
+				} else if (e->kind == EXPRCONST && base.type->size) {
 					if (e->type->u.arith.issigned && e->u.constant.u >> 63)
 						error(&tok.loc, "array length must be non-negative");
 					if (e->u.constant.u > ULLONG_MAX / base.type->size)
@@ -844,7 +850,10 @@ addmember(struct structbuilder *b, struct qualtype mt, char *name, int align, un
 		error(&tok.loc, "struct member '%s' has function type", name);
 	if (mt.type->prop & PROPVM)
 		error(&tok.loc, "struct member '%s' has variably modified type", name);
-	assert(mt.type->align > 0);
+	/* the layout of a mono struct is computed for each instance */
+	if (typedep(mt.type) && !(t->u.structunion.gen && t->u.structunion.gen->ismono))
+		error(&tok.loc, "member '%s' with type depending on mono parameters requires a mono forall %s", name, t->kind == TYPESTRUCT ? "struct" : "union");
+	assert(mt.type->align > 0 || typedep(mt.type));
 	if (name || width == -1) {
 		m = xmalloc(sizeof(*m));
 		m->type = mt.type;
@@ -864,6 +873,8 @@ addmember(struct structbuilder *b, struct qualtype mt, char *name, int align, un
 				error(&tok.loc, "specified alignment of struct member '%s' is less strict than is required by type", name);
 			align = b->pack ? 1 : mt.type->align;
 		}
+		if (!align)
+			align = 1;
 		if (t->kind == TYPESTRUCT) {
 			m->offset = ALIGNUP(t->size, align);
 			t->size = m->offset + mt.type->size;
@@ -1112,8 +1123,6 @@ genparams(struct scope *s)
 		error(&tok.loc, "existential types are not yet implemented");
 	if (!consume(T_FORALL))
 		error(&tok.loc, "expected 'forall' after 'mono' or 'erased'");
-	if (ismono)
-		error(&tok.loc, "mono declarations are not yet implemented");
 	g = mkgeneric(ismono);
 	expect(TLESS, "after 'forall'");
 	do {
@@ -1288,6 +1297,8 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 					error(&tok.loc, "forall typedef '%s' redefined", name);
 				d = mkdecl(name, DECLTYPE, t, tq, LINKNONE);
 				d->gen = gen;
+				if (!gen->name)
+					gen->name = name;
 				if (!gen->pattern)
 					gen->pattern = t;
 				else if (gen->pattern != t)
@@ -1310,6 +1321,8 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 			if (d->linkage == LINKNONE && !(sc & SCSTATIC)) {
 				d->u.obj.storage = SDAUTO;
 			} else {
+				if (fc && fc->mono && d->linkage == LINKNONE)
+					error(&tok.loc, "static local variables in mono functions are not yet supported");
 				d->u.obj.storage = sc & SCTHREADLOCAL ? SDTHREAD : SDSTATIC;
 				if (t->prop & PROPVM)
 					error(&tok.loc, "object '%s' with %s storage duration cannot have variably modified type", name, d->u.obj.storage == SDSTATIC ? "static" : "thread");
@@ -1325,7 +1338,12 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 					error(&tok.loc, "object '%s' with block scope and %s linkage cannot have initializer", name, d->linkage == LINKEXTERN ? "external" : "internal");
 				if (d->defined)
 					error(&tok.loc, "object '%s' redefined", name);
-				init = autoinit ? autoinit : parseinit(ls, d->type);
+				if (autoinit)
+					init = autoinit;
+				else if (typedep(d->type))
+					init = depinit(ls, d->type);
+				else
+					init = parseinit(ls, d->type);
 				hasinit = true;
 			} else if (sc & SCEXTERN) {
 				break;
@@ -1346,9 +1364,13 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 				error(&tok.loc, "function '%s' with block scope may only have storage class 'extern'", name);
 			if (gen && !gen->ismono)
 				checkerased(t, name);
+			if (gen && !gen->name)
+				gen->name = name;
 			d = declcommon(s, kind, name, asmname, t, tq, sc, prior);
 			if (gen && !prior)
 				d->gen = gen;
+			if (gen && !gen->ismono != !d->gen->ismono)
+				error(&tok.loc, "'%s' redeclared with different mono and erased behavior", name);
 			d->value = mkglobal(d);
 			d->u.func.inlinedefn = d->linkage == LINKEXTERN && fs & FUNCINLINE && !(sc & SCEXTERN) && (!prior || prior->u.func.inlinedefn);
 			d->u.func.isnoreturn = fs & FUNCNORETURN || a.kind & ATTRNORETURN;
@@ -1360,6 +1382,21 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 				/* re-open scope from function declarator */
 				assert(funcscope);
 				s = funcscope;
+				if (gen && gen->ismono) {
+					/* the body is checked once, and instantiated for each set of arguments */
+					d->u.func.namedecl = mkdecl("__func__", DECLOBJECT, mkarraytype(&typechar, QUALCONST, strlen(name) + 1), QUALNONE, LINKNONE);
+					d->u.func.namedecl->u.obj.storage = SDSTATIC;
+					scopeputdecl(s, d->u.func.namedecl);
+					bodyctx.type = qt.type;
+					bodyctx.mono = true;
+					d->u.func.body = funcbody(&bodyctx, s);
+					d->u.func.deftype = qt.type;
+					d->u.func.defgen = gen;
+					s = delscope(s);
+					d->defined = true;
+					return true;
+				}
+				bodyctx.mono = false;
 				/* the body uses the declarator's own forall parameters */
 				f = mkfunc(d, name, qt.type, s);
 				bodyctx.type = qt.type;

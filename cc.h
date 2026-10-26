@@ -191,6 +191,8 @@ struct decl {
 			/* alignment of object storage (may be stricter than type requires) */
 			int align;
 			enum storageduration storage;
+			/* a static local of a mono function, which each instance has its own copy of */
+			bool mono;
 		} obj;
 		struct {
 			/* the function might have an "inline definition" (C11 6.7.4p7) */

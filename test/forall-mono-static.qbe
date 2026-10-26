@@ -1,0 +1,41 @@
+export
+function $f() {
+@start.1
+@body.2
+	%.1 =w call $"count<int>"()
+	%.2 =w call $"count<double>"()
+	%.3 =l call $"slot<short>"()
+	%.4 =l call $"size<long>"()
+	ret
+}
+data $.Ln.3 = align 4 { z 4 }
+function w $"count<int>"() {
+@start.3
+@body.4
+	%.1 =w loadw $.Ln.3
+	%.2 =w add %.1, 1
+	storew %.2, $.Ln.3
+	ret %.2
+}
+data $.Ln.5 = align 4 { z 4 }
+function w $"count<double>"() {
+@start.5
+@body.6
+	%.1 =w loadw $.Ln.5
+	%.2 =w add %.1, 1
+	storew %.2, $.Ln.5
+	ret %.2
+}
+data $.Lvalue.7 = align 2 { z 2 }
+function l $"slot<short>"() {
+@start.7
+@body.8
+	ret $.Lvalue.7
+}
+data $.Ls.9 = align 8 { l 8, }
+function l $"size<long>"() {
+@start.9
+@body.10
+	%.1 =l loadl $.Ls.9
+	ret %.1
+}

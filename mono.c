@@ -165,15 +165,18 @@ copydecl(struct copy *c, struct decl *d)
 	n = ptrget(&c->decls, d);
 	if (n)
 		return n;
-	/* only automatic objects belong to the instance */
-	if (d->kind != DECLOBJECT || d->linkage != LINKNONE || d->u.obj.storage != SDAUTO)
+	/* only automatic objects and static locals belong to the instance */
+	if (d->kind != DECLOBJECT || d->linkage != LINKNONE || d->u.obj.storage != SDAUTO && !d->u.obj.mono)
 		return d;
 	q = d->qual;
 	n = mkdecl(d->name, DECLOBJECT, copytype(c, d->type, &q), q, LINKNONE);
 	n->u.obj = d->u.obj;
+	n->u.obj.mono = false;
 	if (n->u.obj.align < n->type->align)
 		n->u.obj.align = n->type->align;
 	n->defined = d->defined;
+	if (d->u.obj.mono)
+		n->value = mkglobal(n);
 	ptrput(&c->decls, d, n);
 	return n;
 }
@@ -382,6 +385,11 @@ copystmt(struct copy *c, struct stmt *st)
 		if (d) {
 			n->u.decl.decl = copydecl(c, d);
 			n->u.decl.init = copyinit(c, st->u.decl.init, d->type, n->u.decl.decl->type);
+			if (d->u.obj.mono) {
+				/* a static local is defined when the instance is created, not when it is reached */
+				emitdata(n->u.decl.decl, n->u.decl.init);
+				n->u.decl.decl = NULL;
+			}
 		}
 		n->u.decl.vm = copyexpr(c, st->u.decl.vm);
 		break;

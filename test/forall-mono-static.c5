@@ -1,0 +1,24 @@
+mono forall<type T>
+int count(void) {
+	static int n;
+	return ++n;
+}
+
+mono forall<type T>
+T *slot(void) {
+	static T value;
+	return &value;
+}
+
+mono forall<type T>
+unsigned long size(void) {
+	static unsigned long s = sizeof(T);
+	return s;
+}
+
+void f(void) {
+	count<int>();
+	count<double>();
+	slot<short>();
+	size<long>();
+}

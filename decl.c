@@ -1090,7 +1090,7 @@ defineobj(struct decl *d, struct init *init, bool hasinit, struct stmt ***end)
 		error(&tok.loc, "object '%s' has incomplete type", d->name);
 	if (d->u.obj.align < d->type->align)
 		d->u.obj.align = d->type->align;
-	if (d->u.obj.storage == SDAUTO) {
+	if (d->u.obj.storage == SDAUTO || d->u.obj.mono) {
 		st = addstmt(end, STMTDECL);
 		st->u.decl.decl = d;
 		st->u.decl.init = init;
@@ -1321,12 +1321,14 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 			if (d->linkage == LINKNONE && !(sc & SCSTATIC)) {
 				d->u.obj.storage = SDAUTO;
 			} else {
-				if (fc && fc->mono && d->linkage == LINKNONE)
-					error(&tok.loc, "static local variables in mono functions are not yet supported");
 				d->u.obj.storage = sc & SCTHREADLOCAL ? SDTHREAD : SDSTATIC;
 				if (t->prop & PROPVM)
 					error(&tok.loc, "object '%s' with %s storage duration cannot have variably modified type", name, d->u.obj.storage == SDSTATIC ? "static" : "thread");
-				d->value = mkglobal(d);
+				/* the static locals of a mono function are created for each instance */
+				if (fc && fc->mono && d->linkage == LINKNONE)
+					d->u.obj.mono = true;
+				else
+					d->value = mkglobal(d);
 			}
 
 			if (base.expr)

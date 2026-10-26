@@ -148,6 +148,22 @@ eval(struct expr *expr)
 			break;
 		}
 		break;
+	case EXPRCOND:
+		/*
+		Conditional expressions with a constant condition are folded
+		when they are parsed, but the condition may only become
+		constant when a mono function is instantiated.
+		*/
+		l = eval(expr->base);
+		if (l->kind != EXPRCONST || !(l->type->prop & PROPINT) || !(t->prop & PROPARITH))
+			break;
+		r = eval(l->u.constant.u ? expr->u.cond.t : expr->u.cond.f);
+		if (r->kind != EXPRCONST || !(r->type->prop & PROPARITH))
+			break;
+		/* convert the chosen operand to the type of the result */
+		expr->kind = EXPRCAST;
+		expr->base = r;
+		return eval(expr);
 	case EXPRCAST:
 		l = eval(expr->base);
 		if (l->kind == EXPRCONST) {

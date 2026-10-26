@@ -1,0 +1,11 @@
+mono forall<type T>
+unsigned long bytes(T x) {
+	_Static_assert(sizeof(T) <= 8, "type too large");
+	return sizeof(T);
+}
+mono forall<type T>
+unsigned long wrap(T x) {
+	return bytes(x);
+}
+struct big { long a, b, c; };
+unsigned long f(struct big b) { return wrap(b); }

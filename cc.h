@@ -75,6 +75,7 @@ enum typeprop {
 	PROPFLOAT   = 1<<5,
 	PROPVM      = 1<<6, /* variably-modified type */
 	PROPFLEX    = 1<<7, /* struct with flexible array member */
+	PROPDEPLEN  = 1<<8, /* array whose length depends on mono parameters */
 };
 
 struct bitfield {
@@ -377,6 +378,8 @@ char *tokenstr(enum tokenkind);
 char *tokencheck(const struct token *, enum tokenkind, const char *);
 void diagloc(const struct location *);
 noreturn void error(const struct location *, const char *, ...);
+/* called after an error is reported, to add notes */
+extern void (*errornotes)(void);
 
 /* scan */
 
@@ -476,6 +479,7 @@ void closeangle(void);
 /* mono */
 
 struct decl *monoinst(struct decl *, struct genarg *);
+struct expr *constsubst(struct expr *, struct generic *, struct genarg *);
 void emitmonoinsts(void);
 
 /* targ */
@@ -546,6 +550,7 @@ struct expr *expr(struct scope *);
 struct expr *assignexpr(struct scope *);
 struct expr *condexpr(struct scope *);
 unsigned long long intconstexpr(struct scope *, bool);
+bool exprdep(struct expr *);
 void delexpr(struct expr *);
 
 struct expr *exprassign(struct expr *, struct type *);
@@ -600,6 +605,8 @@ enum stmtkind {
 	STMTCONTINUE,
 	STMTRETURN,
 	STMTDEFER,
+	/* static assertion depending on mono parameters, checked for each instance */
+	STMTSTATICASSERT,
 };
 
 /*
@@ -684,6 +691,12 @@ struct stmt {
 			/* next outer deferred block in effect */
 			struct stmt *prev;
 		} defer;
+		struct {
+			struct expr *cond;
+			struct stringlit msg;
+			bool hasmsg;
+			struct location loc;
+		} staticassert;
 	} u;
 };
 

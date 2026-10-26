@@ -244,6 +244,9 @@ lowerstmt(struct func *f, struct stmt *st)
 	case STMTDEFER:
 		/* executed when its scope is exited */
 		break;
+	case STMTSTATICASSERT:
+		/* checked when the instance was created */
+		break;
 	}
 }
 

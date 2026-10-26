@@ -788,6 +788,10 @@ declarator(struct scope *s, struct qualtype base, char **name, int *align, struc
 					if (e->type->u.arith.issigned && e->u.constant.u >> 63)
 						error(&tok.loc, "array length must be non-negative");
 					t->u.array.length = e;
+				} else if (exprdep(e)) {
+					/* the length is computed for each instance */
+					t->prop |= PROPDEPLEN;
+					t->u.array.length = e;
 				} else if (e->kind == EXPRCONST && base.type->size) {
 					if (e->type->u.arith.issigned && e->u.constant.u >> 63)
 						error(&tok.loc, "array length must be non-negative");
@@ -948,16 +952,40 @@ placemember(struct structbuilder *b, struct member *m, struct type *mt, char *na
 		t->align = align;
 }
 
+/*
+In a mono function, a static assertion depending on the type parameters
+is checked for each instance, so it is added to `end`.
+*/
 static bool
-staticassert(struct scope *s)
+staticassert(struct scope *s, struct stmt ***end)
 {
 	struct stringlit msg;
+	struct location loc;
+	struct expr *e;
+	struct stmt *st;
 	unsigned long long c;
 
 	if (!consume(TSTATIC_ASSERT))
 		return false;
 	expect(TLPAREN, "after static_assert");
-	c = intconstexpr(s, true);
+	loc = tok.loc;
+	e = eval(condexpr(s));
+	if (end && exprdep(e)) {
+		st = addstmt(end, STMTSTATICASSERT);
+		st->u.staticassert.cond = e;
+		st->u.staticassert.loc = loc;
+		if (consume(TCOMMA)) {
+			tokencheck(&tok, TSTRINGLIT, "after static assertion expression");
+			stringconcat(&st->u.staticassert.msg, true);
+			st->u.staticassert.hasmsg = true;
+		}
+		expect(TRPAREN, "after static assertion");
+		expect(TSEMICOLON, "after static assertion");
+		return true;
+	}
+	if (e->kind != EXPRCONST || !(e->type->prop & PROPINT))
+		error(&tok.loc, "not an integer constant expression");
+	c = e->u.constant.u;
 	if (consume(TCOMMA)) {
 		tokencheck(&tok, TSTRINGLIT, "after static assertion expression");
 		stringconcat(&msg, true);
@@ -979,7 +1007,7 @@ structdecl(struct scope *s, struct structbuilder *b)
 	unsigned long long width;
 	int align;
 
-	if (staticassert(s))
+	if (staticassert(s, NULL))
 		return;
 	attr(NULL, 0);
 	base = declspecs(s, NULL, NULL, &align);
@@ -1215,7 +1243,7 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 	size_t i;
 	int align;
 
-	if (staticassert(s))
+	if (staticassert(s, fc && fc->mono ? end : NULL))
 		return true;
 	a.kind = 0;
 	if (attr(&a, ATTRNORETURN) && consume(TSEMICOLON))

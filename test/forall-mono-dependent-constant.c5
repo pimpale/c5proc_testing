@@ -1,0 +1,15 @@
+mono forall<type T>
+unsigned long f(T x) {
+	_Static_assert(sizeof(T) <= 32, "type too large");
+	unsigned char buf[sizeof(T)];
+	T arr[sizeof(T) > 4 ? 2 : 3];
+	return sizeof buf + sizeof arr;
+}
+
+struct big {
+	long a, b, c;
+};
+
+unsigned long g(struct big b) {
+	return f(1) + f(b);
+}

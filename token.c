@@ -161,6 +161,8 @@ diagloc(const struct location *loc)
 	fprintf(stderr, "%s:%zu:%zu: ", loc->file, loc->line, loc->col);
 }
 
+void (*errornotes)(void);
+
 void
 error(const struct location *loc, const char *fmt, ...)
 {
@@ -172,5 +174,7 @@ error(const struct location *loc, const char *fmt, ...)
 	vfprintf(stderr, fmt, ap);
 	va_end(ap);
 	putc('\n', stderr);
+	if (errornotes)
+		errornotes();
 	exit(1);
 }

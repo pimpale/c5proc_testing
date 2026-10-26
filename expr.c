@@ -1484,6 +1484,34 @@ condexpr(struct scope *s)
 	return e;
 }
 
+/* whether e depends on the layout of types depending on mono parameters */
+bool
+exprdep(struct expr *e)
+{
+	struct expr *sub;
+
+	if (!e)
+		return false;
+	switch (e->kind) {
+	case EXPRLAYOUT:
+		return true;
+	case EXPRBINARY:
+		return exprdep(e->u.binary.l) || exprdep(e->u.binary.r);
+	case EXPRCOND:
+		return exprdep(e->base) || exprdep(e->u.cond.t) || exprdep(e->u.cond.f);
+	case EXPRCOMMA:
+		for (sub = e->base; sub; sub = sub->next) {
+			if (exprdep(sub))
+				return true;
+		}
+		return false;
+	case EXPRUNARY:
+	case EXPRCAST:
+		return exprdep(e->base);
+	}
+	return false;
+}
+
 unsigned long long
 intconstexpr(struct scope *s, bool allowneg)
 {

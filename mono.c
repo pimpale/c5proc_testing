@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "util.h"
@@ -88,11 +89,27 @@ struct inst {
 	struct decl *decl;
 	struct genarg *args;
 	struct decl *inst;
+	/* where the instance was first requested, and by which instance */
 	struct location loc;
+	struct inst *parent;
 	struct inst *next;
 };
 
 static struct inst *insts, **instsend = &insts;
+/* the instance being created */
+static struct inst *curinst;
+
+/* explain which instantiations led to an error */
+static void
+instnotes(void)
+{
+	struct inst *i;
+
+	for (i = curinst; i; i = i->parent) {
+		diagloc(&i->loc);
+		fprintf(stderr, "note: in instantiation of '%s'\n", i->inst->name);
+	}
+}
 
 /* state for copying a function body for an instance */
 struct copy {
@@ -142,7 +159,12 @@ monoinst(struct decl *d, struct genarg *args)
 	i->decl = d;
 	i->args = args;
 	i->inst = n;
-	i->loc = tok.loc;
+	/* not a conditional expression, to avoid a QBE 1.3 bug with conditional moves */
+	if (curinst)
+		i->loc = curinst->loc;
+	else
+		i->loc = tok.loc;
+	i->parent = curinst;
 	i->next = NULL;
 	*instsend = i;
 	instsend = &i->next;
@@ -201,6 +223,14 @@ copyinit(struct copy *c, struct init *init, struct type *oldtype, struct type *n
 	if (typedep(oldtype))
 		head = initresolve(head, newtype);
 	return head;
+}
+
+static struct type *
+copytypeonly(struct copy *c, struct type *t)
+{
+	enum typequal q = QUALNONE;
+
+	return copytype(c, t, &q);
 }
 
 static struct expr *
@@ -265,7 +295,7 @@ copyexpr(struct copy *c, struct expr *e)
 	n = ptrget(&c->exprs, e);
 	if (n)
 		return n;
-	if (e->kind == EXPRLAYOUT) {
+	if (e->kind == EXPRLAYOUT && !typedep(copytypeonly(c, e->u.layout.type))) {
 		n = copylayout(c, e);
 		ptrput(&c->exprs, e, n);
 		return n;
@@ -332,6 +362,11 @@ copyexpr(struct copy *c, struct expr *e)
 	case EXPRSIZEOF:
 		q = QUALNONE;
 		n->u.szof.type = copytype(c, e->u.szof.type, &q);
+		break;
+	case EXPRLAYOUT:
+		/* the type still depends on other mono parameters */
+		q = QUALNONE;
+		n->u.layout.type = copytype(c, e->u.layout.type, &q);
 		break;
 	}
 	return n;
@@ -442,8 +477,37 @@ copystmt(struct copy *c, struct stmt *st)
 		n->u.defer.body = copystmts(c, st->u.defer.body);
 		n->u.defer.prev = stmtref(c, st->u.defer.prev);
 		break;
+	case STMTSTATICASSERT:
+		n->u.staticassert.cond = eval(copyexpr(c, st->u.staticassert.cond));
+		if (n->u.staticassert.cond->kind != EXPRCONST || !(n->u.staticassert.cond->type->prop & PROPINT))
+			error(&st->u.staticassert.loc, "not an integer constant expression");
+		if (!n->u.staticassert.cond->u.constant.u) {
+			if (st->u.staticassert.hasmsg)
+				error(&st->u.staticassert.loc, "static assertion failed: %.*s", (int)(st->u.staticassert.msg.size - 1), (char *)st->u.staticassert.msg.data);
+			error(&st->u.staticassert.loc, "static assertion failed");
+		}
+		break;
 	}
 	return n;
+}
+
+/*
+Substitute the arguments `args` for the parameters of g in a constant
+expression, and evaluate it.
+*/
+struct expr *
+constsubst(struct expr *e, struct generic *g, struct genarg *args)
+{
+	struct copy c;
+
+	memset(&c, 0, sizeof(c));
+	c.gen = g;
+	c.args = args;
+	e = eval(copyexpr(&c, e));
+	ptrfree(&c.decls);
+	ptrfree(&c.exprs);
+	ptrfree(&c.stmts);
+	return e;
 }
 
 static void
@@ -460,6 +524,7 @@ instantiate(struct inst *i)
 	d = i->decl;
 	if (!d->u.func.body)
 		error(&i->loc, "mono function '%s' is used but not defined in this translation unit", d->name);
+	curinst = i;
 	memset(&c, 0, sizeof(c));
 	/* the body refers to the parameters of its own definition */
 	c.gen = d->u.func.defgen;
@@ -482,6 +547,7 @@ instantiate(struct inst *i)
 	ptrfree(&c.decls);
 	ptrfree(&c.exprs);
 	ptrfree(&c.stmts);
+	curinst = NULL;
 }
 
 /* emit the instances of mono functions, including those they use in turn */
@@ -490,6 +556,8 @@ emitmonoinsts(void)
 {
 	struct inst *i;
 
+	errornotes = instnotes;
 	for (i = insts; i; i = i->next)
 		instantiate(i);
+	errornotes = NULL;
 }

@@ -601,15 +601,17 @@ next(void)
 	}
 
 	/* keywords spelled in C5 files */
-	if (tok.kind >= C5_ARRAY && tok.kind <= C5_TEMPLATE && c5file(tok.loc.file)) {
+	if (tok.kind >= C5_ARRAY && tok.kind <= C5_SLICE && c5file(tok.loc.file)) {
 		switch (tok.kind) {
-		case C5_ARRAY:    tok.kind = T_C5ARRAY;    break;
-		case C5_DEFER:    tok.kind = T_DEFER;      break;
-		case C5_GENERIC:  tok.kind = T_C5GENERIC;  break;
-		case C5_GIVEN:    tok.kind = T_C5GIVEN;    break;
-		case C5_IMPLICIT: tok.kind = T_C5IMPLICIT; break;
-		case C5_SLICE:    tok.kind = T_C5SLICE;    break;
-		case C5_TEMPLATE: tok.kind = T_C5TEMPLATE; break;
+		case C5_ARRAY:    tok.kind = T_ARRAY;    break;
+		case C5_DEFER:    tok.kind = T_DEFER;    break;
+		case C5_ERASED:   tok.kind = T_ERASED;   break;
+		case C5_EXISTS:   tok.kind = T_EXISTS;   break;
+		case C5_FORALL:   tok.kind = T_FORALL;   break;
+		case C5_GIVEN:    tok.kind = T_GIVEN;    break;
+		case C5_IMPLICIT: tok.kind = T_IMPLICIT; break;
+		case C5_MONO:     tok.kind = T_MONO;     break;
+		case C5_SLICE:    tok.kind = T_SLICE;    break;
 		}
 	}
 }

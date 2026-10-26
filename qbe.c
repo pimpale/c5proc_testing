@@ -1033,6 +1033,10 @@ zero(struct func *func, struct value *addr, int align, unsigned long long offset
 	struct value *tmp;
 	int a = 1;
 
+	/* the widest store is 8 bytes, even for objects with stricter alignment */
+	if (align > 8)
+		align = 8;
+
 	while (offset < end) {
 		if ((align - (offset & align - 1)) & a) {
 			tmp = offset ? funcinst(func, IADD, ptrclass, addr, mkintconst(offset)) : addr;

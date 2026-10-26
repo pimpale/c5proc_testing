@@ -53,8 +53,12 @@ typehasparam(struct type *t, struct generic *g)
 	switch (t->kind) {
 	case TYPEPARAM:
 		return !g || t->u.param.gen == g;
-	case TYPEPOINTER:
 	case TYPEARRAY:
+		/* the length may depend on parameters */
+		if (t->prop & PROPDEPLEN)
+			return true;
+		/* fallthrough */
+	case TYPEPOINTER:
 		return typehasparam(t->base, g);
 	case TYPEFUNC:
 		if (typehasparam(t->base, g))
@@ -88,8 +92,11 @@ typehasparamkind(struct type *t, bool mono)
 	switch (t->kind) {
 	case TYPEPARAM:
 		return t->u.param.gen->ismono == mono;
-	case TYPEPOINTER:
 	case TYPEARRAY:
+		if (t->prop & PROPDEPLEN && mono)
+			return true;
+		/* fallthrough */
+	case TYPEPOINTER:
 		return typehasparamkind(t->base, mono);
 	case TYPEFUNC:
 		if (typehasparamkind(t->base, mono))
@@ -131,7 +138,7 @@ typedep(struct type *t)
 	case TYPEPARAM:
 		return t->u.param.gen->ismono;
 	case TYPEARRAY:
-		return typedep(t->base);
+		return t->prop & PROPDEPLEN || typedep(t->base);
 	case TYPESTRUCT:
 	case TYPEUNION:
 		tg = t->u.structunion.gen;
@@ -151,10 +158,11 @@ typesubst(struct type *t, enum typequal *tq, struct generic *g, struct genarg *a
 	struct generic *tg;
 	struct genarg *newargs;
 	struct decl *p, *np, **end;
+	struct expr *len;
 	enum typequal q;
 	size_t i;
 
-	if (!typehasparam(t, g))
+	if (!typehasparam(t, g) && !(t->prop & PROPDEPLEN))
 		return t;
 	switch (t->kind) {
 	case TYPEPARAM:
@@ -167,6 +175,20 @@ typesubst(struct type *t, enum typequal *tq, struct generic *g, struct genarg *a
 	case TYPEARRAY:
 		q = t->qual;
 		n = typesubst(t->base, &q, g, args);
+		if (t->prop & PROPDEPLEN) {
+			len = constsubst(t->u.array.length, g, args);
+			if (len->kind != EXPRCONST) {
+				/* still depends on other mono parameters */
+				n = mkarraytype(n, q, 0);
+				n->incomplete = false;
+				n->prop |= PROPDEPLEN;
+				n->u.array.length = len;
+				return n;
+			}
+			if (len->type->u.arith.issigned && len->u.constant.u >> 63)
+				error(&tok.loc, "array length must be non-negative");
+			return mkarraytype(n, q, len->u.constant.u);
+		}
 		if (t->u.array.length && t->u.array.length->kind == EXPRCONST)
 			n = mkarraytype(n, q, t->u.array.length->u.constant.u);
 		else if (t->incomplete || !t->base->size)
@@ -190,6 +212,9 @@ typesubst(struct type *t, enum typequal *tq, struct generic *g, struct genarg *a
 			q = p->qual;
 			np->type = typesubst(p->type, &q, g, args);
 			np->qual = q;
+			/* the alignment of a parameter of dependent type is only now known */
+			if (np->kind == DECLOBJECT && np->u.obj.align < np->type->align)
+				np->u.obj.align = np->type->align;
 			*end = np;
 			end = &np->next;
 		}

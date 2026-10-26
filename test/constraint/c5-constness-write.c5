@@ -1,0 +1,1 @@
+forall<constness C> void f(C char *s) { *s = 0; }

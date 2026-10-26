@@ -118,6 +118,45 @@ struct copy {
 	struct ptrmap decls, exprs, stmts;
 };
 
+/*
+Constness is always erased, so instances do not depend on it. Erase the
+constness arguments, and constness parameters of the context in the
+other arguments, by making them const.
+*/
+static struct genarg *
+eraseconst(struct generic *g, struct genarg *args)
+{
+	static struct generic *anyconst;
+	static struct genarg constargs[3];
+	struct genarg *n;
+	size_t i;
+
+	if (!anyconst) {
+		anyconst = mkgeneric(false);
+		anyconst->nparam = 3;
+		anyconst->params = xreallocarray(NULL, 3, sizeof(anyconst->params[0]));
+		for (i = 0; i < 3; ++i) {
+			memset(&anyconst->params[i], 0, sizeof(anyconst->params[i]));
+			anyconst->params[i].kind = GENCONSTNESS;
+			anyconst->params[i].bit = QUALCPARAM0 << i;
+			constargs[i].qual = QUALCONST;
+			constargs[i].constset = true;
+		}
+	}
+	n = xreallocarray(NULL, g->nparam, sizeof(*n));
+	for (i = 0; i < g->nparam; ++i) {
+		n[i] = args[i];
+		if (g->params[i].kind == GENCONSTNESS) {
+			n[i].qual = QUALCONST;
+			n[i].constset = true;
+		} else if (n[i].type) {
+			n[i].qual = qualsubst(n[i].qual, anyconst, constargs);
+			n[i].type = typesubst(n[i].type, &n[i].qual, anyconst, constargs);
+		}
+	}
+	return n;
+}
+
 /* the instance of the mono function d for the arguments `args` */
 struct decl *
 monoinst(struct decl *d, struct genarg *args)
@@ -129,6 +168,7 @@ monoinst(struct decl *d, struct genarg *args)
 	char *name;
 
 	assert(d->gen && d->gen->ismono);
+	args = eraseconst(d->gen, args);
 	for (i = insts; i; i = i->next) {
 		if (i->decl == d && argssame(d->gen, i->args, args))
 			return i->inst;
@@ -184,7 +224,7 @@ copydecl(struct copy *c, struct decl *d)
 	/* only automatic objects and static locals belong to the instance */
 	if (d->kind != DECLOBJECT || d->linkage != LINKNONE || d->u.obj.storage != SDAUTO && !d->u.obj.mono)
 		return d;
-	q = d->qual;
+	q = qualsubst(d->qual, c->gen, c->args);
 	n = mkdecl(d->name, DECLOBJECT, copytype(c, d->type, &q), q, LINKNONE);
 	n->u.obj = d->u.obj;
 	n->u.obj.mono = false;
@@ -304,7 +344,7 @@ copyexpr(struct copy *c, struct expr *e)
 	ptrput(&c->exprs, e, n);
 	q = QUALNONE;
 	n->type = copytype(c, e->type, &q);
-	n->qual |= q;
+	n->qual = qualsubst(e->qual, c->gen, c->args) | q;
 	n->next = NULL;
 	n->toeval = copyexpr(c, e->toeval);
 	if (e->kind != EXPRCOMMA)
@@ -315,9 +355,12 @@ copyexpr(struct copy *c, struct expr *e)
 		if (d->gen && e->u.ident.genargs) {
 			args = xreallocarray(NULL, d->gen->nparam, sizeof(*args));
 			for (i = 0; i < d->gen->nparam; ++i) {
-				args[i].qual = e->u.ident.genargs[i].qual;
+				args[i].qual = qualsubst(e->u.ident.genargs[i].qual, c->gen, c->args);
 				args[i].type = NULL;
 				args[i].size = NULL;
+				args[i].constset = e->u.ident.genargs[i].constset;
+				if (d->gen->params[i].kind == GENCONSTNESS)
+					continue;
 				if (e->u.ident.genargs[i].type)
 					args[i].type = copytype(c, e->u.ident.genargs[i].type, &args[i].qual);
 				else

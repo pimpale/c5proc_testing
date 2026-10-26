@@ -1,0 +1,1 @@
+forall<constness C> char *f(C char *s) { char *u = s; return u; }

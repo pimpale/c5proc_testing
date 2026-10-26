@@ -1,0 +1,2 @@
+forall<constness C> C char *find(C char *s, int c);
+char *g(const char *cs) { return find<mut>(cs, 1); }

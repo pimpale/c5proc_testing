@@ -1,0 +1,27 @@
+forall<constness C>
+C char *find(C char *s, int c) {
+	for (; *s; s++) {
+		if (*s == c)
+			return s;
+	}
+	return 0;
+}
+
+forall<constness C>
+struct View {
+	C char *p;
+	unsigned long n;
+};
+
+mono forall<type T, constness C>
+C T *firstof(C T *p) {
+	return p;
+}
+
+void f(char *buf, const char *cs, struct View<const> v, const int *ci, int *i) {
+	char *p = find(buf, 'l');
+	const char *q = find(cs, 'b');
+	const char *r = find<const>(buf, 'o');
+	firstof(ci);
+	firstof(i);
+}

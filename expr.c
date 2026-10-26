@@ -209,7 +209,7 @@ exprassign(struct expr *e, struct type *t)
 			error(&tok.loc, "assignment to pointer must be from pointer or null pointer constant");
 		if (t->base != &typevoid && et->base != &typevoid && !typecompatible(t->base, et->base))
 			error(&tok.loc, "base types of pointer assignment must be compatible or void");
-		if ((et->qual & t->qual) != et->qual)
+		if (!qualsubset(et->qual, t->qual))
 			error(&tok.loc, "assignment to pointer discards qualifiers");
 		break;
 	case TYPENULLPTR:
@@ -827,6 +827,8 @@ primaryexpr(struct scope *s)
 			d = scopegetdecl(s, tokenstr(tok.kind), 1);
 			if (!d)
 				error(&tok.loc, "undeclared identifier: %s", tokenstr(tok.kind));
+			if (d->kind == DECLCONST && d->gen && d->gen->params[d->u.enumconst].kind == GENCONSTNESS)
+				error(&tok.loc, "constness parameter '%s' is not a value", d->name);
 			if (d->kind == DECLCONST && d->gen) {
 				/* size parameter */
 				if (!d->gen->ismono && !allowerasedsize)
@@ -876,7 +878,7 @@ genref(struct scope *s, struct expr *e)
 		args = genargs(s, d->gen, true);
 		e->u.ident.genargs = args;
 		for (i = 0; i < d->gen->nparam; ++i) {
-			if (!args[i].type && !args[i].size)
+			if (!args[i].type && !args[i].size && !args[i].constset)
 				break;
 		}
 		if (i == d->gen->nparam) {
@@ -922,7 +924,7 @@ argscomplete(struct generic *g, struct genarg *args)
 	if (!args)
 		return false;
 	for (i = 0; i < g->nparam; ++i) {
-		if (!args[i].type && !args[i].size)
+		if (!args[i].type && !args[i].size && !args[i].constset)
 			return false;
 	}
 	return true;
@@ -964,8 +966,8 @@ geninfer(struct scope *s, struct expr *r, struct expr **args)
 			error(&tok.loc, "cannot infer type arguments of '%s' from argument %zu", d->name, i);
 	}
 	for (i = 0; i < g->nparam; ++i) {
-		if (!bind[i].type && !bind[i].size)
-			error(&tok.loc, "cannot infer %s parameter '%s' of '%s'", g->params[i].kind == GENSIZE ? "size" : "type", g->params[i].name, d->name);
+		if (!bind[i].type && !bind[i].size && !bind[i].constset)
+			error(&tok.loc, "cannot infer %s parameter '%s' of '%s'", g->params[i].kind == GENSIZE ? "size" : g->params[i].kind == GENCONSTNESS ? "constness" : "type", g->params[i].name, d->name);
 	}
 	genbind(r->base, bind);
 	r->type = mkpointertype(r->base->type, QUALNONE);
@@ -1120,7 +1122,7 @@ mkincdecexpr(enum tokenkind op, struct expr *base, bool post)
 
 	if (!base->lvalue)
 		error(&tok.loc, "operand of '%s' operator must be an lvalue", tokenstr(op));
-	if (base->qual & QUALCONST)
+	if (base->qual & QUALCONSTANT)
 		error(&tok.loc, "operand of '%s' operator is const qualified", tokenstr(op));
 	e = mkexpr(EXPRINCDEC, base->type, base);
 	e->op = op;
@@ -1676,6 +1678,8 @@ assignexpr(struct scope *s)
 	default:
 		return l;
 	}
+	if (l->qual & QUALCONSTANT)
+		error(&tok.loc, "assignment to const qualified object");
 	if (!l->lvalue)
 		error(&tok.loc, "left side of assignment expression is not an lvalue");
 	next();

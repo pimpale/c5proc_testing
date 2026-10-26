@@ -1,0 +1,72 @@
+export
+function l $find(l %.1, w %.3) {
+@start.1
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc4 4
+	storew %.3, %.4
+@body.2
+@for_cond.3
+	%.5 =l loadl %.2
+	%.6 =w loadsb %.5
+	%.7 =w extsb %.6
+	jnz %.7, @for_body.4, @for_join.6
+@for_body.4
+	%.8 =l loadl %.2
+	%.9 =w loadsb %.8
+	%.10 =w extsb %.9
+	%.11 =w loadw %.4
+	%.12 =w ceqw %.10, %.11
+	jnz %.12, @if_true.7, @if_false.8
+@if_true.7
+	%.13 =l loadl %.2
+	ret %.13
+@if_false.8
+@for_cont.5
+	%.14 =l loadl %.2
+	%.15 =l add %.14, 1
+	storel %.15, %.2
+	jmp @for_cond.3
+@for_join.6
+	%.16 =l extsw 0
+	ret %.16
+}
+type :View.1 = { l, l, }
+export
+function $f(l %.1, l %.3, :View.1 %.5, l %.6, l %.8) {
+@start.9
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+	%.7 =l alloc8 8
+	storel %.6, %.7
+	%.9 =l alloc8 8
+	storel %.8, %.9
+	%.10 =l alloc8 8
+	%.13 =l alloc8 8
+	%.16 =l alloc8 8
+@body.10
+	%.11 =l loadl %.2
+	%.12 =l call extern $find(l %.11, w 108)
+	storel %.12, %.10
+	%.14 =l loadl %.4
+	%.15 =l call extern $find(l %.14, w 98)
+	storel %.15, %.13
+	%.17 =l loadl %.2
+	%.18 =l call extern $find(l %.17, w 111)
+	storel %.18, %.16
+	%.19 =l loadl %.7
+	%.20 =l call $"firstof<int, >"(l %.19)
+	%.21 =l loadl %.9
+	%.22 =l call $"firstof<int, >"(l %.21)
+	ret
+}
+function l $"firstof<int, >"(l %.1) {
+@start.11
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.12
+	%.3 =l loadl %.2
+	ret %.3
+}

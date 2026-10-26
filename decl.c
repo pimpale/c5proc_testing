@@ -129,14 +129,23 @@ storageclass(enum storageclass *sc)
 
 /* 6.7.3 Type qualifiers */
 static int
-typequal(enum typequal *tq)
+typequal(struct scope *s, enum typequal *tq)
 {
+	struct decl *d;
+
 	switch (tok.kind) {
 	case TCONST:    *tq |= QUALCONST;    break;
 	case TVOLATILE: *tq |= QUALVOLATILE; break;
 	case TRESTRICT: *tq |= QUALRESTRICT; break;
 	case T_ATOMIC: error(&tok.loc, "_Atomic type qualifier is not yet supported");
-	default: return 0;
+	default:
+		/* constness parameter */
+		if (tok.kind < TIDENT)
+			return 0;
+		d = scopegetdecl(s, tokenstr(tok.kind), true);
+		if (!d || d->kind != DECLCONST || !d->gen || d->gen->params[d->u.enumconst].kind != GENCONSTNESS)
+			return 0;
+		*tq |= d->gen->params[d->u.enumconst].bit;
 	}
 	next();
 
@@ -384,7 +393,7 @@ declspecs(struct scope *s, enum storageclass *sc, enum funcspec *fs, int *align)
 	if (align)
 		*align = 0;
 	for (;;) {
-		if (typequal(&tq) || storageclass(sc) || funcspec(fs))
+		if (typequal(s, &tq) || storageclass(sc) || funcspec(fs))
 			continue;
 		op = tok.kind;
 		switch (op) {
@@ -618,7 +627,7 @@ declaratortypes(struct scope *s, struct list *result, char **name, int *align, s
 	while (consume(TMUL)) {
 		attr(NULL, 0);
 		tq = QUALNONE;
-		while (typequal(&tq))
+		while (typequal(s, &tq))
 			;
 		t = mkpointertype(NULL, tq);
 		listinsert(result, &t->link);
@@ -708,7 +717,7 @@ declaratortypes(struct scope *s, struct list *result, char **name, int *align, s
 				goto attr;
 			next();
 			t = mkarraytype(NULL, QUALNONE, 0);
-			while (consume(TSTATIC) || typequal(&t->u.array.ptrqual))
+			while (consume(TSTATIC) || typequal(s, &t->u.array.ptrqual))
 				;
 			if (tok.kind == TMUL && peek(TRBRACK)) {
 				t->prop |= PROPVM;
@@ -1173,6 +1182,7 @@ genparams(struct scope *s)
 	struct decl *d;
 	bool ismono;
 	size_t i, j;
+	int nconst;
 
 	ismono = consume(T_MONO);
 	if (!ismono)
@@ -1183,13 +1193,21 @@ genparams(struct scope *s)
 		error(&tok.loc, "expected 'forall' after 'mono' or 'erased'");
 	g = mkgeneric(ismono);
 	expect(TLESS, "after 'forall'");
+	nconst = 0;
 	do {
-		if (tok.kind == C5_CONSTNESS)
-			error(&tok.loc, "'constness' parameters are not yet implemented");
-		if (tok.kind != C5_TYPE && tok.kind != C5_SIZE)
-			error(&tok.loc, "expected 'type', 'size', or 'constness' in forall parameter list");
 		p = arrayadd(&params, sizeof(*p));
-		p->kind = tok.kind == C5_SIZE ? GENSIZE : GENTYPE;
+		switch (tok.kind) {
+		case C5_TYPE:      p->kind = GENTYPE;      break;
+		case C5_SIZE:      p->kind = GENSIZE;      break;
+		case C5_CONSTNESS:
+			p->kind = GENCONSTNESS;
+			if (nconst == 3)
+				error(&tok.loc, "too many constness parameters");
+			p->bit = QUALCPARAM0 << nconst++;
+			break;
+		default:
+			error(&tok.loc, "expected 'type', 'size', or 'constness' in forall parameter list");
+		}
 		next();
 		p->name = expect(TIDENT, "after parameter kind");
 		p->type = NULL;
@@ -1203,8 +1221,8 @@ genparams(struct scope *s)
 			if (strcmp(g->params[j].name, p->name) == 0)
 				error(&tok.loc, "duplicate forall parameter '%s'", p->name);
 		}
-		if (p->kind == GENSIZE) {
-			/* a size parameter is a constant of type size_t */
+		if (p->kind == GENSIZE || p->kind == GENCONSTNESS) {
+			/* a size parameter is a constant of type size_t; a constness parameter is a qualifier */
 			d = mkdecl(p->name, DECLCONST, &typeulong, QUALNONE, LINKNONE);
 			d->gen = g;
 			d->u.enumconst = i;

@@ -36,7 +36,18 @@ enum typequal {
 	QUALCONST    = 1<<1,
 	QUALRESTRICT = 1<<2,
 	QUALVOLATILE = 1<<3,
-	QUALATOMIC   = 1<<4
+	QUALATOMIC   = 1<<4,
+
+	/*
+	constness parameters of the enclosing forall declaration, which
+	may be either const or not
+	*/
+	QUALCPARAM0  = 1<<5,
+	QUALCPARAM1  = 1<<6,
+	QUALCPARAM2  = 1<<7,
+	QUALCPARAMS  = QUALCPARAM0|QUALCPARAM1|QUALCPARAM2,
+	/* qualifiers that prevent modification */
+	QUALCONSTANT = QUALCONST|QUALCPARAMS,
 };
 
 enum typekind {
@@ -455,6 +466,7 @@ extern struct type *typeadjvalist;
 enum genparamkind {
 	GENTYPE,
 	GENSIZE,
+	GENCONSTNESS,
 };
 
 struct genparam {
@@ -462,6 +474,8 @@ struct genparam {
 	char *name;
 	/* TYPEPARAM type for a type parameter */
 	struct type *type;
+	/* qualifier bit for a constness parameter */
+	enum typequal bit;
 };
 
 /* parameters of a forall declaration */
@@ -483,6 +497,8 @@ struct genarg {
 	enum typequal qual;
 	/* integer constant expression for a size parameter */
 	struct expr *size;
+	/* for a constness parameter, whether `qual` is known */
+	bool constset;
 };
 
 struct generic *mkgeneric(bool);
@@ -500,6 +516,8 @@ struct genarg *genidentity(struct generic *);
 struct expr *mksizeparamexpr(struct generic *, size_t);
 bool sizesame(struct expr *, struct expr *);
 bool argssame(struct generic *, struct genarg *, struct genarg *);
+enum typequal qualsubst(enum typequal, struct generic *, struct genarg *);
+bool qualsubset(enum typequal, enum typequal);
 void closeangle(void);
 
 /* mono */

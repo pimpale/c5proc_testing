@@ -184,19 +184,19 @@ static struct init *
 copyinit(struct copy *c, struct init *init, struct type *oldtype, struct type *newtype)
 {
 	struct init *head, **end, *n;
-	bool dep;
 
-	dep = typedep(oldtype);
 	end = &head;
 	for (; init; init = init->next) {
 		n = mkinit(init->start, init->end, init->bits, copyexpr(c, init->expr));
-		/* the single initializer of an object of dependent type covers the whole object */
-		if (dep && init->start == 0 && init->end == 0)
-			n->end = newtype->size;
+		n->path = init->path;
+		n->npath = init->npath;
 		*end = n;
 		end = &n->next;
 	}
 	*end = NULL;
+	/* offsets of initializers for dependent types are computed now that the type is known */
+	if (typedep(oldtype))
+		head = initresolve(head, newtype);
 	return head;
 }
 

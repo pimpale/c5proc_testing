@@ -328,11 +328,24 @@ struct expr {
 	} u;
 };
 
+/* a step from an object to a subobject: an array index, or a member position */
+struct initstep {
+	bool isindex;
+	unsigned long long n;
+};
+
 struct init {
 	unsigned long long start, end;
 	struct expr *expr;
 	struct bitfield bits;
 	struct init *next;
+	/*
+	for objects with types depending on mono parameters, the
+	subobject being initialized; its offset is computed when the
+	type is instantiated (see initresolve)
+	*/
+	struct initstep *path;
+	size_t npath;
 };
 
 /* token */
@@ -527,7 +540,7 @@ struct expr *eval(struct expr *);
 
 struct init *mkinit(unsigned long long, unsigned long long, struct bitfield, struct expr *);
 struct init *parseinit(struct scope *, struct type *);
-struct init *depinit(struct scope *, struct type *);
+struct init *initresolve(struct init *, struct type *);
 
 
 /* backend */

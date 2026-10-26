@@ -1338,12 +1338,7 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 					error(&tok.loc, "object '%s' with block scope and %s linkage cannot have initializer", name, d->linkage == LINKEXTERN ? "external" : "internal");
 				if (d->defined)
 					error(&tok.loc, "object '%s' redefined", name);
-				if (autoinit)
-					init = autoinit;
-				else if (typedep(d->type))
-					init = depinit(ls, d->type);
-				else
-					init = parseinit(ls, d->type);
+				init = autoinit ? autoinit : parseinit(ls, d->type);
 				hasinit = true;
 			} else if (sc & SCEXTERN) {
 				break;

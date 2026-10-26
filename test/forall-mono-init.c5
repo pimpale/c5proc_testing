@@ -1,0 +1,42 @@
+mono forall<type T>
+struct Pair {
+	char tag;
+	T first;
+	T second;
+	char name[4];
+};
+
+mono forall<type T>
+struct Box {
+	int n;
+	struct Pair<T> pair;
+	T arr[2];
+};
+
+mono forall<type T>
+struct Box<T> mkbox(T a, T b) {
+	struct Box<T> x = {7, {'z', a, b, "ab"}, {b, a}};
+	return x;
+}
+
+mono forall<type T>
+struct Pair<T> mkpair(T a) {
+	return (struct Pair<T>){.second = a, .tag = 'q'};
+}
+
+mono forall<type T>
+struct Pair<T> zeroed(void) {
+	struct Pair<T> p = {0};
+	return p;
+}
+
+struct big {
+	long a, b, c;
+};
+
+void f(struct big *b) {
+	mkbox(1, 2);
+	mkbox(b[0], b[1]);
+	mkpair(b[0]);
+	zeroed<short>();
+}

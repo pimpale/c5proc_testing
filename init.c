@@ -12,6 +12,8 @@ struct object {
 		struct member *mem;
 		unsigned long long idx;
 	} u;
+	/* index of the current array element */
+	unsigned long long elem;
 	bool iscur;
 };
 
@@ -20,6 +22,11 @@ struct initparser {
 	   number of nested objects in initializer */
 	struct object obj[32], *cur, *sub;
 	struct init *init, **last;
+	/*
+	whether the type depends on mono parameters, so offsets are not
+	known and entries record their subobject instead
+	*/
+	bool dep;
 };
 
 struct init *
@@ -33,16 +40,26 @@ mkinit(unsigned long long start, unsigned long long end, struct bitfield bits, s
 	init->expr = expr;
 	init->bits = bits;
 	init->next = NULL;
+	init->path = NULL;
+	init->npath = 0;
 
 	return init;
 }
 
-static void
-initadd(struct initparser *p, struct init *new)
+/* number of elements in an array type whose element type depends on mono parameters */
+static unsigned long long
+arraycount(struct type *t)
 {
-	struct init **init, *old;
+	assert(t->u.array.length && t->u.array.length->kind == EXPRCONST);
+	return t->u.array.length->u.constant.u;
+}
 
-	init = p->last;
+/* insert `new` into the list starting at *init, replacing initializers it covers */
+static struct init **
+initinsert(struct init **init, struct init *new)
+{
+	struct init *old;
+
 	for (; old = *init; init = &old->next) {
 		if (old->end * 8 - old->bits.after <= new->start * 8 + new->bits.before)
 			continue;
@@ -59,7 +76,97 @@ initadd(struct initparser *p, struct init *new)
 	}
 	new->next = old;
 	*init = new;
-	p->last = &new->next;
+	return &new->next;
+}
+
+static void
+initadd(struct initparser *p, struct init *new)
+{
+	struct init **end;
+
+	if (p->dep) {
+		/* the order is determined when offsets are known */
+		for (end = &p->init; *end; end = &(*end)->next)
+			;
+		*end = new;
+		return;
+	}
+	p->last = initinsert(p->last, new);
+}
+
+/* record the subobject an initializer entry applies to */
+static void
+initpath(struct initparser *p, struct init *init)
+{
+	struct object *o;
+	struct member *m;
+	struct initstep *step;
+	unsigned long long n;
+
+	init->npath = p->sub - p->obj;
+	init->path = xreallocarray(NULL, init->npath, sizeof(*init->path));
+	for (o = p->obj, step = init->path; o < p->sub; ++o, ++step) {
+		if (o->type->kind == TYPEARRAY) {
+			step->isindex = true;
+			step->n = o->elem;
+		} else {
+			n = 0;
+			for (m = o->type->u.structunion.members; m != o->u.mem; m = m->next)
+				++n;
+			step->isindex = false;
+			step->n = n;
+		}
+	}
+}
+
+/*
+Compute the offsets of the entries of an initializer for an object of
+the concrete type t, which was parsed for a type depending on mono
+parameters.
+*/
+struct init *
+initresolve(struct init *init, struct type *t)
+{
+	struct init *head, *next;
+	struct type *st;
+	struct member *m;
+	unsigned long long off, n;
+	size_t i;
+
+	head = NULL;
+	for (; init; init = next) {
+		next = init->next;
+		if (!init->path && init->npath == 0 && init->end == 0) {
+			/* the single initializer of the whole object */
+			init->start = 0;
+			init->end = t->size;
+			init->bits = (struct bitfield){0};
+			init->next = NULL;
+			initinsert(&head, init);
+			continue;
+		}
+		st = t;
+		off = 0;
+		init->bits = (struct bitfield){0};
+		for (i = 0; i < init->npath; ++i) {
+			if (init->path[i].isindex) {
+				off += init->path[i].n * st->base->size;
+				st = st->base;
+			} else {
+				m = st->u.structunion.members;
+				for (n = init->path[i].n; n > 0; --n)
+					m = m->next;
+				off += m->offset;
+				st = m->type;
+				init->bits = m->bits;
+			}
+		}
+		init->start = off;
+		init->end = off + st->size;
+		init->next = NULL;
+		initinsert(&head, init);
+	}
+	return head;
 }
 
 static void
@@ -113,11 +220,18 @@ designator(struct scope *s, struct initparser *p)
 			if (t->kind != TYPEARRAY)
 				error(&tok.loc, "index designator is only valid for array types");
 			next();
-			p->sub->u.idx = intconstexpr(s, false) * t->base->size;
-			if (p->sub->u.idx >= t->size) {
-				if (!t->incomplete)
+			p->sub->elem = intconstexpr(s, false);
+			if (p->dep && typedep(t->base)) {
+				if (p->sub->elem >= arraycount(t))
 					error(&tok.loc, "index designator is larger than array length");
-				t->size = p->sub->u.idx + t->base->size;
+				p->sub->u.idx = 0;
+			} else {
+				p->sub->u.idx = p->sub->elem * t->base->size;
+				if (p->sub->u.idx >= t->size) {
+					if (!t->incomplete)
+						error(&tok.loc, "index designator is larger than array length");
+					t->size = p->sub->u.idx + t->base->size;
+				}
 			}
 			expect(TRBRACK, "for index designator");
 			subobj(p, t->base, p->sub->u.idx);
@@ -146,6 +260,7 @@ focus(struct initparser *p)
 	case TYPEARRAY:
 		t = p->sub->type->base;
 		p->sub->u.idx = 0;
+		p->sub->elem = 0;
 		if (p->sub->type->incomplete)
 			p->sub->type->size = t->size;
 		break;
@@ -170,6 +285,14 @@ advance(struct initparser *p)
 		t = p->sub->type;
 		switch (t->kind) {
 		case TYPEARRAY:
+			++p->sub->elem;
+			if (p->dep && typedep(t->base)) {
+				if (p->sub->elem < arraycount(t)) {
+					subobj(p, t->base, 0);
+					return;
+				}
+				break;
+			}
 			p->sub->u.idx += t->base->size;
 			if (p->sub->u.idx == t->size) {
 				if (!t->incomplete)
@@ -192,32 +315,6 @@ advance(struct initparser *p)
 }
 
 /* 6.7.9 Initialization */
-/*
-Parse the initializer of an object whose type depends on mono
-parameters. Since its layout is not known yet, only `{}`, `{0}`, or a
-single expression of the same type are allowed. The result is NULL for
-zero initialization, or a single entry whose end is filled in when the
-type is instantiated.
-*/
-struct init *
-depinit(struct scope *s, struct type *t)
-{
-	struct expr *e;
-
-	if (consume(TLBRACE)) {
-		if (consume(TRBRACE))
-			return NULL;
-		e = eval(assignexpr(s));
-		consume(TCOMMA);
-		if (e->kind != EXPRCONST || !(e->type->prop & PROPINT) || e->u.constant.u != 0 || tok.kind != TRBRACE)
-			error(&tok.loc, "initializer lists for types depending on mono parameters are not yet supported");
-		next();
-		return NULL;
-	}
-	e = exprassign(assignexpr(s), t);
-	return mkinit(0, 0, (struct bitfield){0}, e);
-}
-
 struct init *
 parseinit(struct scope *s, struct type *t)
 {
@@ -225,6 +322,7 @@ parseinit(struct scope *s, struct type *t)
 	struct expr *expr;
 	struct type *base;
 	struct bitfield bits;
+	struct init *new;
 
 	p.cur = NULL;
 	p.sub = p.obj;
@@ -233,11 +331,12 @@ parseinit(struct scope *s, struct type *t)
 	p.sub->iscur = false;
 	p.init = NULL;
 	p.last = &p.init;
-	if (typedep(t))
-		error(&tok.loc, "initializer lists for types depending on mono parameters are not yet supported");
+	p.dep = typedep(t);
+	if (p.dep && t->kind == TYPEARRAY && t->incomplete)
+		error(&tok.loc, "array of unknown size with element type depending on mono parameters cannot be initialized");
 	if (t->incomplete && t->kind != TYPEARRAY)
 		error(&tok.loc, "initializer specified for incomplete type");
-	if (t->kind == TYPEARRAY && t->base->size == 0)
+	if (t->kind == TYPEARRAY && t->base->size == 0 && !typedep(t->base))
 		error(&tok.loc, "initializer specified for variable length array type");
 	for (;;) {
 		if (p.cur) {
@@ -249,6 +348,8 @@ parseinit(struct scope *s, struct type *t)
 				focus(&p);
 		}
 		if (consume(TLBRACE)) {
+			if (p.sub->type->kind == TYPEPARAM && tok.kind != TRBRACE)
+				error(&tok.loc, "braces around initializer for type parameter '%s'", p.sub->type->u.param.name);
 			if (consume(TRBRACE)){
 				if (p.sub->type->incomplete)
 					error(&tok.loc, "array of unknown size has empty initializer");
@@ -283,6 +384,13 @@ parseinit(struct scope *s, struct type *t)
 				if (typecompatible(expr->type, t))
 					goto add;
 				break;
+			case TYPEPARAM:
+				/* the structure of a type parameter is unknown, so it is initialized as a whole */
+				expr = eval(expr);
+				if (expr->kind == EXPRCONST && expr->type->prop & PROPINT && expr->u.constant.u == 0)
+					goto next;  /* zero */
+				expr = exprassign(expr, t);
+				goto add;
 			default:  /* scalar type */
 				assert(t->prop & PROPSCALAR);
 				expr = exprassign(expr, t);
@@ -295,7 +403,10 @@ parseinit(struct scope *s, struct type *t)
 			bits = p.sub[-1].u.mem->bits;
 		else
 			bits = (struct bitfield){0};
-		initadd(&p, mkinit(p.sub->offset, p.sub->offset + p.sub->type->size, bits, expr));
+		new = mkinit(p.sub->offset, p.sub->offset + p.sub->type->size, bits, expr);
+		if (p.dep)
+			initpath(&p, new);
+		initadd(&p, new);
 		for (;;) {
 			if (p.sub->type->incomplete)
 				p.sub->type->incomplete = false;

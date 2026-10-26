@@ -1,0 +1,2 @@
+mono forall<type T> struct P { T a; };
+mono forall<type T> void f(T x) { struct P<T> p = { { x } }; }

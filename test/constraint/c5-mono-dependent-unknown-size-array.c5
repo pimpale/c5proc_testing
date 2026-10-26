@@ -1,0 +1,1 @@
+mono forall<type T> void f(T x) { T arr[] = { x, x }; }

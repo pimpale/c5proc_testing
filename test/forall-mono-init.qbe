@@ -1,0 +1,189 @@
+type :Pair.2 = { b, w, w, b 4, }
+type :Box.1 = { w, :Pair.2, w 2, }
+type :big.3 = { l, l, l, }
+type :Pair.5 = { b, :big.3, :big.3, b 4, }
+type :Box.4 = { w, :Pair.5, :big.3 2, }
+type :Pair.6 = { b, h, h, b 4, }
+export
+function $f(l %.1) {
+@start.1
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.2
+	%.3 =:Box.1 call $"mkbox<int>"(w 1, w 2)
+	%.4 =l loadl %.2
+	%.5 =l extsw 0
+	%.6 =l mul %.5, 24
+	%.7 =l add %.4, %.6
+	%.8 =l loadl %.2
+	%.9 =l extsw 1
+	%.10 =l mul %.9, 24
+	%.11 =l add %.8, %.10
+	%.12 =:Box.4 call $"mkbox<big>"(:big.3 %.7, :big.3 %.11)
+	%.13 =l loadl %.2
+	%.14 =l extsw 0
+	%.15 =l mul %.14, 24
+	%.16 =l add %.13, %.15
+	%.17 =:Pair.5 call $"mkpair<big>"(:big.3 %.16)
+	%.18 =:Pair.6 call $"zeroed<short>"()
+	ret
+}
+function :Box.1 $"mkbox<int>"(w %.1, w %.4) {
+@start.3
+	%.2 =l add 4, 18446744073709551600
+	%.3 =l alloc16 %.2
+	storew %.1, %.3
+	%.5 =l add 4, 18446744073709551600
+	%.6 =l alloc16 %.5
+	storew %.4, %.6
+	%.7 =l alloc4 28
+@body.4
+	storew 7, %.7
+	%.8 =l add %.7, 4
+	storeb 122, %.8
+	%.9 =l add %.7, 5
+	storeb 0, %.9
+	%.10 =l add %.7, 6
+	storeh 0, %.10
+	%.11 =l add %.7, 8
+	%.12 =w loadw %.3
+	storew %.12, %.11
+	%.13 =l add %.7, 12
+	%.14 =w loadw %.6
+	storew %.14, %.13
+	%.15 =l add %.7, 16
+	storeb 97, %.15
+	%.16 =l add %.7, 17
+	storeb 98, %.16
+	%.17 =l add %.7, 18
+	storeb 0, %.17
+	%.18 =l add %.7, 19
+	storeb 0, %.18
+	%.19 =l add %.7, 20
+	%.20 =w loadw %.6
+	storew %.20, %.19
+	%.21 =l add %.7, 24
+	%.22 =w loadw %.3
+	storew %.22, %.21
+	ret %.7
+}
+function :Box.4 $"mkbox<big>"(:big.3 %.1, :big.3 %.2) {
+@start.5
+	%.3 =l alloc8 120
+@body.6
+	storew 7, %.3
+	%.4 =l add %.3, 4
+	storew 0, %.4
+	%.5 =l add %.3, 8
+	storeb 122, %.5
+	%.6 =l add %.3, 9
+	storeb 0, %.6
+	%.7 =l add %.3, 10
+	storeh 0, %.7
+	%.8 =l add %.3, 12
+	storew 0, %.8
+	%.9 =l add %.3, 16
+	%.10 =l loadl %.1
+	storel %.10, %.9
+	%.11 =l add %.1, 8
+	%.12 =l add %.9, 8
+	%.13 =l loadl %.11
+	storel %.13, %.12
+	%.14 =l add %.11, 8
+	%.15 =l add %.12, 8
+	%.16 =l loadl %.14
+	storel %.16, %.15
+	%.17 =l add %.3, 40
+	%.18 =l loadl %.2
+	storel %.18, %.17
+	%.19 =l add %.2, 8
+	%.20 =l add %.17, 8
+	%.21 =l loadl %.19
+	storel %.21, %.20
+	%.22 =l add %.19, 8
+	%.23 =l add %.20, 8
+	%.24 =l loadl %.22
+	storel %.24, %.23
+	%.25 =l add %.3, 64
+	storeb 97, %.25
+	%.26 =l add %.3, 65
+	storeb 98, %.26
+	%.27 =l add %.3, 66
+	storeb 0, %.27
+	%.28 =l add %.3, 67
+	storeb 0, %.28
+	%.29 =l add %.3, 68
+	storew 0, %.29
+	%.30 =l add %.3, 72
+	%.31 =l loadl %.2
+	storel %.31, %.30
+	%.32 =l add %.2, 8
+	%.33 =l add %.30, 8
+	%.34 =l loadl %.32
+	storel %.34, %.33
+	%.35 =l add %.32, 8
+	%.36 =l add %.33, 8
+	%.37 =l loadl %.35
+	storel %.37, %.36
+	%.38 =l add %.3, 96
+	%.39 =l loadl %.1
+	storel %.39, %.38
+	%.40 =l add %.1, 8
+	%.41 =l add %.38, 8
+	%.42 =l loadl %.40
+	storel %.42, %.41
+	%.43 =l add %.40, 8
+	%.44 =l add %.41, 8
+	%.45 =l loadl %.43
+	storel %.45, %.44
+	ret %.3
+}
+function :Pair.5 $"mkpair<big>"(:big.3 %.1) {
+@start.7
+	%.2 =l alloc8 64
+@body.8
+	storeb 113, %.2
+	%.3 =l add %.2, 1
+	storeb 0, %.3
+	%.4 =l add %.2, 2
+	storeh 0, %.4
+	%.5 =l add %.2, 4
+	storew 0, %.5
+	%.6 =l add %.2, 8
+	storel 0, %.6
+	%.7 =l add %.2, 16
+	storel 0, %.7
+	%.8 =l add %.2, 24
+	storel 0, %.8
+	%.9 =l add %.2, 32
+	%.10 =l loadl %.1
+	storel %.10, %.9
+	%.11 =l add %.1, 8
+	%.12 =l add %.9, 8
+	%.13 =l loadl %.11
+	storel %.13, %.12
+	%.14 =l add %.11, 8
+	%.15 =l add %.12, 8
+	%.16 =l loadl %.14
+	storel %.16, %.15
+	%.17 =l add %.2, 56
+	storel 0, %.17
+	ret %.2
+}
+function :Pair.6 $"zeroed<short>"() {
+@start.9
+	%.1 =l alloc4 10
+@body.10
+	storeb 0, %.1
+	%.2 =l add %.1, 1
+	storeb 0, %.2
+	%.3 =l add %.1, 2
+	storeh 0, %.3
+	%.4 =l add %.1, 4
+	storeh 0, %.4
+	%.5 =l add %.1, 6
+	storeh 0, %.5
+	%.6 =l add %.1, 8
+	storeh 0, %.6
+	ret %.1
+}

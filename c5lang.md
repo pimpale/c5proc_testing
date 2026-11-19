@@ -305,15 +305,14 @@ int main() {
     Vec<int> ints_b = {/*something*/};
     eq(&ints_a, &ints_b);
     // desugars to
-    // given Eq<Vec<int>> t0 = EQ_VEC_LOGICAL(&EQ_INT_LOGICAL);
+    // Eq<Vec<int>> t0 = EQ_VEC_LOGICAL(.elem=&EQ_INT_LOGICAL);
     // eq(&ints_a, &ints_b, .e=&t0);
 }
 
 ```
 
 The given resolution process will resolve a T* if a given of T exists in scope by taking the address of that T.
-The given resolution process also applies the Paterson rule: the selected premises will always be less or equally as complex than the output of the function.
-This prevents infinite loops.
+The given resolution process also applies the Paterson rule: the selected premises will never be more complex than the output of the function. Any resolution loops are defined as errors.
 The temporaries created by this process live as long as the block they are enclosed in.
 
 One limitation of derived instances is that they do not live long enough to store in data structures by default. 
@@ -352,7 +351,7 @@ This has essentially the same behavior, but is better integrated with the polymo
 C5 has three different kinds of entities that may be indexed with []:
 1. Classical C arrays: declared as `int x[5];`. These undergo decay in parameters, as before.
 2. Proper array types declared as `array<int, 5> x;`. These can be passed and returned by value, like arrays in structs.
-3. Finally, a slice type written as `slice<int>`. Under the hood, it is a two element struct, with a pointer, and a length field.
+3. Finally, a slice type written as `slice<int>`. Under the hood, it is a two element struct, with a pointer (`data`), followed by a `size_t` length field (`length`).
 
 #### C5 Arrays
 
@@ -376,7 +375,7 @@ slice<int> x = {0}; // not a slice of [0]! Instead, a null slice (null ptr, 0 le
 A slice can be created explicitly via struct construction, or through slicing:
 The specific slicing syntax that we can use (applies to slices, pointers and arrays) is p[n ... m] and p[... m], when we care about a 0 indexed prefix.
 Slice length for p[n ... m] is m - n + 1. Thus, p[0 ... len - 1] is safe even when len is 0.
-p[n ...] and p[...] are also permissible when indexing a slice, C5 array, or C array, for a slice to the end.
+p[n ...] and p[...] are also permissible when indexing a slice, C5 array, or C array (but not a plain pointer), for a slice to the end.
 Slice ranges are inclusive. This is the same syntax used in C29 case ranges.
 
 The actual way to get a slice of [0] is:
@@ -385,7 +384,7 @@ array<int, 1> y = { 0 };
 slice<int> x = y[...];
 ```
 
-Generally speaking there are no implicit conversions to slices.
+There are no implicit conversions to slices, except from `slice<T>` to `slice<const T>`.
 
 ### String Literals
 
@@ -395,7 +394,7 @@ C5 supports two new prefixes before strings:
 * `p"`: pascal style. No null terminator.
 * `c"`: c style, with a null terminator.
 
-Both of these can be combined with other prefixes, eg `pL`, or `cu8`. The p or c must come before the other encoding flags.
+Both of these can be combined with one of the encoding prefixes (`n`, `L`, `u8`, `u`, `U`), eg `pL`, or `cu8`. The p or c must come before the other encoding flags.
 
 It also supports a new prefix:
 * `n"`: native encoding. This is the default in C, unless some prefix is applied.
@@ -569,7 +568,7 @@ Planned, but not implemented in v1.
 
 ### Miscellaneous smaller changes and notes:
 
-* sizeof and typeof require parentheses around their arguments.
+* typeof requires parentheses around its argument. In C-incompatible mode, so does sizeof.
 * return statements take initializer lists in the grammar, enabling using struct initializers in return position. 
 * C29's defer is implemented (exactly the way it is in C29).
 * Range syntax for cases is identical to the range syntax for slices (described in C29). 
@@ -599,8 +598,8 @@ Each parameter must be one of `type`, `size`, or `constness`.
 Note that `constness` will always be erased, even if `mono` is applied. 
 
 A `<` following an identifier opens an argument list only if that identifier names a `forall` entity in the current scope, or is one of the keywords `array` and `slice`; otherwise it is the less-than operator.
-Inside an argument list, a `>>` token closes two lists, so `Vec<Vec<int>>` is valid. A `size` argument that contains a top-level `>` or `>>` must be parenthesized, e.g. `array<int, (N > 4 ? 8 : 4)>`.
-* This also applies to top level `<`, `==`, `&`, `|`, `&&`, and `?:`.
+Inside an argument list, a `>>` token closes two lists, so `Vec<Vec<int>>` is valid. A `size` argument that contains a top-level comparison, bitwise, logical, or conditional operator must be parenthesized, e.g. `array<int, (N > 4 ? 8 : 4)>`.
+* This also applies to top level `>`, `<`, `>>`, `<<` `==`, `&`, `|`, `&&`, and `?:`.
 
 
 ### Type parameters
@@ -687,7 +686,7 @@ Suppose we have a call `f<type_args>(args, .overrides=overrides)`. Then:
    * Implicit conversions are not considered, except for constness conversions. Const can also be captured via a constness qualifier. 
    * Conflicting bindings are an error.
    * We infer from left to right at the call site. Ordering of named parameters matters for whether resolution succeeds or not.
-3. We then unify the return type of the call with the expected type, but only in the contexts: 
+3. We then unify the return type of the call with the expected type (binding only the parameters that are still unknown), but only in the contexts: 
     * the right side of =
     * the operand of return
     * the whole initializer of a declaration with a concrete type.
@@ -767,6 +766,6 @@ You can do:
 ```C
 #include <c5.h>
 ```
-to be able to use the reserved keywords. (These keywords work in C-incompatible mode as well, in case you included c5.h in C-compatible mode).
+to be able to use the reserved keywords, as well as `defer`. (These keywords work in C-incompatible mode as well, in case you included c5.h in C-compatible mode).
 
-`sizeof` requires parentheses here too.
+`sizeof` does not require parentheses here.

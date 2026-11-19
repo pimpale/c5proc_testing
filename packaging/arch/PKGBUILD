@@ -1,0 +1,62 @@
+# Builds c5proc from the checkout this file is in, together with the QBE fork
+# it needs, which is the `qbe` git submodule.
+#
+#   git clone --recurse-submodules https://github.com/pimpale/c5proc_testing
+#   cd c5proc_testing/packaging/arch && makepkg -si
+#
+# The compiler emits `comdat` linkage, which stock QBE does not accept, so the
+# fork is installed privately as /usr/lib/cproc/qbe. It does not replace or
+# conflict with the qbe package.
+
+pkgname=c5proc
+pkgver=r25.e7c9533
+pkgrel=1
+pkgdesc='C5 compiler (cproc with structured polymorphism), using a QBE fork with COMDAT support'
+arch=('x86_64')
+url='https://github.com/pimpale/qbe-comdat'
+license=('ISC' 'MIT')
+depends=('gcc' 'binutils')
+makedepends=('git' 'rsync')
+options=('!lto')
+source=()
+
+_c5dir=$(realpath "${startdir:-.}/../..")
+
+pkgver() {
+	printf 'r%s.%s' "$(git -C "$_c5dir" rev-list --count HEAD)" "$(git -C "$_c5dir" rev-parse --short HEAD)"
+}
+
+prepare() {
+	# fetch the submodule if the repository was cloned without it
+	[ -f "$_c5dir/qbe/parse.c" ] || git -C "$_c5dir" submodule update --init qbe
+	# copy the working tree, including uncommitted changes, without build products
+	rsync -a --delete --exclude=.git --exclude='*.o' --exclude=/packaging --exclude=/stage2 --exclude=/stage3 \
+		--exclude=/cproc --exclude=/cproc-qbe --exclude=/config.h --exclude=/config.mk \
+		--exclude=/qbe/qbe --exclude=/qbe/config.h "$_c5dir/" "$srcdir/c5proc/"
+}
+
+build() {
+	make -C "$srcdir/c5proc/qbe" CFLAGS="$CFLAGS -std=c99 -Wall -Wextra -Wpedantic"
+	cd "$srcdir/c5proc"
+	./configure --prefix=/usr --with-qbe=/usr/lib/cproc/qbe CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS"
+	make
+}
+
+check() {
+	cd "$srcdir/c5proc"
+	make check
+}
+
+package() {
+	cd "$srcdir/c5proc"
+	# installed as c5proc, so that it can coexist with a cproc package; the
+	# driver finds the compiler proper by appending -qbe to its own name
+	install -Dm755 cproc "$pkgdir/usr/bin/c5proc"
+	install -Dm755 cproc-qbe "$pkgdir/usr/bin/c5proc-qbe"
+	install -Dm644 cproc.1 "$pkgdir/usr/share/man/man1/c5proc.1"
+	install -Dm644 include/c5.h "$pkgdir/usr/lib/cproc/include/c5.h"
+	install -Dm755 qbe/qbe "$pkgdir/usr/lib/cproc/qbe"
+	install -Dm644 c5lang.md "$pkgdir/usr/share/doc/c5proc/c5lang.md"
+	install -Dm644 LICENSE "$pkgdir/usr/share/licenses/c5proc/LICENSE"
+	install -Dm644 qbe/LICENSE "$pkgdir/usr/share/licenses/c5proc/LICENSE.qbe"
+}

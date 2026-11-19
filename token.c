@@ -26,7 +26,7 @@ tokeninit(void)
 	size_t l, i;
 
 	mapinit(&tokmap, 1024);
-	for (s = strings, e = strings + sizeof strings - 1; s != e; s += l + 1) {
+	for (s = strings, e = strings + sizeof(strings) - 1; s != e; s += l + 1) {
 		l = strlen((char *)s);
 		if (l) {
 			mapkey(&k, s, l);

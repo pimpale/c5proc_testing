@@ -43,6 +43,7 @@ mkscope(struct scope *parent)
 	s = xmalloc(sizeof(*s));
 	s->decls.len = 0;
 	s->tags.len = 0;
+	s->givens = NULL;
 	s->breakstmt = parent->breakstmt;
 	s->continuestmt = parent->continuestmt;
 	s->switchstmt = parent->switchstmt;

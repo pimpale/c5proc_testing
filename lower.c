@@ -102,6 +102,7 @@ lowerstmt(struct func *f, struct stmt *st)
 	struct switchcases *cases;
 	struct value *v;
 	struct block *b[4];
+	struct stmt *c;
 
 	switch (st->kind) {
 	case STMTCOMPOUND:
@@ -138,27 +139,48 @@ lowerstmt(struct func *f, struct stmt *st)
 	case STMTSWITCH:
 		cases = &st->u.switchstmt.cases;
 		cases->root = NULL;
-		cases->type = st->u.switchstmt.cond->type;
+		cases->type = st->u.switchstmt.cond ? st->u.switchstmt.cond->type : NULL;
 		cases->defaultlabel = NULL;
 
 		b[0] = mkblock("switch_cond");
 		b[1] = mkblock("switch_join");
 
-		v = funcexpr(f, st->u.switchstmt.cond);
+		/* a switch on a struct or union has no value; its cases are patterns */
+		v = NULL;
+		if (st->u.switchstmt.cond) {
+			v = funcexpr(f, st->u.switchstmt.cond);
+			st->u.switchstmt.temp->u.temp = v;
+		}
 		funcjmp(f, b[0]);
 		st->breaklabel = b[1];
 		lowerstmts(f, st->u.switchstmt.body);
 		funcjmp(f, b[1]);
 
 		funclabel(f, b[0]);
-		funcswitch(f, v, cases, cases->defaultlabel ? cases->defaultlabel : b[1]);
+		/* patterns and ranges are tested in order; the first that matches is selected */
+		for (c = st->u.switchstmt.tests; c; c = c->u.caselabel.nexttest) {
+			if (!c->u.caselabel.cond)
+				break;
+			b[2] = mkblock("switch_test");
+			funcbranch(f, c->u.caselabel.cond, c->u.caselabel.block, b[2]);
+			funclabel(f, b[2]);
+		}
+		if (c)
+			funcjmp(f, c->u.caselabel.block);
+		else if (v)
+			funcswitch(f, v, cases, cases->defaultlabel ? cases->defaultlabel : b[1]);
+		else
+			funcjmp(f, cases->defaultlabel ? cases->defaultlabel : b[1]);
 
 		funclabel(f, b[1]);
 		break;
 	case STMTCASE:
 		b[0] = mkblock("switch_case");
 		funclabel(f, b[0]);
-		switchcase(&st->u.caselabel.switchstmt->u.switchstmt.cases, st->u.caselabel.value, b[0]);
+		if (st->u.caselabel.istest)
+			st->u.caselabel.block = b[0];
+		else
+			switchcase(&st->u.caselabel.switchstmt->u.switchstmt.cases, st->u.caselabel.value, b[0]);
 		break;
 	case STMTDEFAULT:
 		cases = &st->u.caselabel.switchstmt->u.switchstmt.cases;

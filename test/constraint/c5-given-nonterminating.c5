@@ -1,0 +1,3 @@
+struct A { int a; }; struct B { int b; };
+given A mka(const B *b); given B mkb(const A *a);
+int f(implicit const A *a); int g(void) { return f(); }

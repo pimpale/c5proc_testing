@@ -109,6 +109,8 @@ install: all
 	cp $(objdir)/cproc $(objdir)/cproc-qbe $(DESTDIR)$(BINDIR)
 	mkdir -p $(DESTDIR)$(MANDIR)/man1
 	cp cproc.1 $(DESTDIR)$(MANDIR)/man1
+	mkdir -p $(DESTDIR)$(PREFIX)/lib/cproc/include
+	cp include/c5.h $(DESTDIR)$(PREFIX)/lib/cproc/include
 
 .PHONY: clean
 clean:

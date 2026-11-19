@@ -2,6 +2,9 @@
 
 This is basically a highly experimental fork of `cproc` to try implementing something between C and C++. See [the C5 spec](./c5lang.md).
 
+Current gaps:
+* Static locals inside mono functions, and instances of static mono declarations, are still per translation unit.
+
 # Original Readme
 
 (mirrored on [GitHub][GitHub mirror] and [Codeberg][Codeberg mirror])

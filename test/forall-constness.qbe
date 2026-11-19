@@ -57,11 +57,12 @@ function $f(l %.1, l %.3, :View.1 %.5, l %.6, l %.8) {
 	%.18 =l call extern $find(l %.17, w 111)
 	storel %.18, %.16
 	%.19 =l loadl %.7
-	%.20 =l call $"firstof<int, >"(l %.19)
+	%.20 =l call extern $"firstof<int, >"(l %.19)
 	%.21 =l loadl %.9
-	%.22 =l call $"firstof<int, >"(l %.21)
+	%.22 =l call extern $"firstof<int, >"(l %.21)
 	ret
 }
+export comdat
 function l $"firstof<int, >"(l %.1) {
 @start.11
 	%.2 =l alloc8 8

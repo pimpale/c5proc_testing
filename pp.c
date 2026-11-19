@@ -634,6 +634,57 @@ peek(enum tokenkind kind)
 	return false;
 }
 
+/*
+Whether the braces opened by the current token are followed by a token
+of the given kind. Used to tell a destructuring pattern, which is
+followed by '=', from a compound statement.
+*/
+bool
+peekbraces(enum tokenkind kind)
+{
+	struct array buf = {0};
+	struct token *t;
+	size_t depth, n;
+	bool result;
+
+	assert(tok.kind == TLBRACE);
+	arrayaddbuf(&buf, &tok, sizeof(tok));
+	next();
+	result = false;
+	switch (tok.kind) {
+	/* tokens that start a statement or declaration, but not a pattern */
+	case TRBRACE: case TSEMICOLON: case TIF: case TSWITCH: case TWHILE: case TDO: case TFOR:
+	case TGOTO: case TCONTINUE: case TBREAK: case TRETURN: case TCASE: case TDEFAULT:
+	case T_DEFER: case TSTATIC: case TEXTERN: case TTYPEDEF: case TREGISTER: case TSTATIC_ASSERT:
+	case TMUL: case TLPAREN: case TINC: case TDEC: case TEOF:
+		arrayaddbuf(&buf, &tok, sizeof(tok));
+		break;
+	default:
+		depth = 1;
+		for (;;) {
+			arrayaddbuf(&buf, &tok, sizeof(tok));
+			if (tok.kind == TEOF)
+				break;
+			if (tok.kind == TLBRACE)
+				++depth;
+			else if (tok.kind == TRBRACE && --depth == 0)
+				break;
+			next();
+		}
+		if (tok.kind != TEOF) {
+			next();
+			arrayaddbuf(&buf, &tok, sizeof(tok));
+			result = tok.kind == kind;
+		}
+	}
+	/* the tokens are read again; the buffer must outlive them, so it is not freed */
+	t = buf.val;
+	n = buf.len / sizeof(*t);
+	tok = t[0];
+	ctxpush(t + 1, n - 1, NULL, t[1].space);
+	return result;
+}
+
 char *
 expect(enum tokenkind kind, const char *msg)
 {

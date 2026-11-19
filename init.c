@@ -412,24 +412,43 @@ parseinit(struct scope *s, struct type *t)
 			p.cur->iscur = true;
 			continue;
 		}
+		/* the type of the whole initializer is used to infer type arguments */
+		if (!p.cur)
+			exprexpect(t);
 		expr = assignexpr(s);
 		for (;;) {
 			t = p.sub->type;
 			switch (t->kind) {
 			case TYPEARRAY:
+				/* a C5 array can be initialized with another */
+				if (t->u.array.byvalue && exprunarray(expr) && expr->base->kind != EXPRSTRING && typecompatible(expr->base->type, t)) {
+					expr = expr->base;
+					goto add;
+				}
 				if (!expr->decayed || expr->base->kind != EXPRSTRING || !(t->base->prop & PROPINT))
 					break;
 				base = t->base;
 				expr = expr->base;
 				if (!(base->prop & PROPCHAR && expr->type->base->prop & PROPCHAR) && !typecompatible(base, expr->type->base))
 					error(&tok.loc, "cannot initialize array with string literal of different width");
+				if (t->u.array.byvalue && expr->type->size > t->size)
+					error(&tok.loc, "string literal is too long for array");
 				if (t->incomplete)
 					t->size = expr->type->size;
 				goto add;
 			case TYPESTRUCT:
 			case TYPEUNION:
-				if (typecompatible(expr->type, t))
+				if (typeisslice(t) && typeisslice(expr->type))
+					expr = exprassign(expr, t);
+				if (typecompatible(expr->type, t)) {
+					if (typeisslice(t) && expr->kind == EXPRCOMPOUND && !p.dep) {
+						/* initialize the pointer and length directly, so that a slice of a static array is a constant */
+						for (new = expr->u.compound.init; new; new = new->next)
+							initadd(&p, mkinit(p.sub->offset + new->start, p.sub->offset + new->end, new->bits, new->expr));
+						goto next;
+					}
 					goto add;
+				}
 				break;
 			case TYPEPARAM:
 				/* the structure of a type parameter is unknown, so it is initialized as a whole */

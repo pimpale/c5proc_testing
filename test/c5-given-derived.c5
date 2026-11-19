@@ -1,0 +1,77 @@
+int printf(const char *, ...);
+typedef unsigned long size_t;
+
+mono forall<type T>
+struct Vec { T *p; size_t n; };
+
+mono forall<type T>
+size_t vec_len(Vec<T> *v) { return v->n; }
+mono forall<type T>
+T *vec_at(Vec<T> *v, size_t i) { return v->p + i; }
+
+forall<type T>
+struct Eq {
+	const void *inner;
+	bool (*eq)(const void *inner, T *a, T *b);
+};
+
+bool eq_int(const void *inner, int *a, int *b) { return *a == *b; }
+bool eq_dbl(const void *inner, double *a, double *b) { return *a == *b; }
+
+given const Eq<int> EQ_INT_LOGICAL = { .inner = nullptr, .eq = eq_int };
+given const Eq<double> EQ_DOUBLE_LOGICAL = { .inner = nullptr, .eq = eq_dbl };
+
+mono forall<type T>
+bool eq_vec_logical(const void *inner_raw, Vec<T> *a, Vec<T> *b) {
+	const Eq<T> *inner = inner_raw;
+	size_t len = vec_len(a);
+	if (vec_len(b) != len)
+		return false;
+	for (size_t i = 0; i < len; i++) {
+		if (!inner->eq(inner->inner, vec_at(a, i), vec_at(b, i)))
+			return false;
+	}
+	return true;
+}
+
+mono forall<type T>
+given Eq<Vec<T>> EQ_VEC_LOGICAL(const Eq<T> *elem) {
+	return { .inner = elem, .eq = eq_vec_logical<T> };
+}
+
+forall<type T>
+bool eq(T *a, T *b, implicit const Eq<T> *e) { return e->eq(e->inner, a, b); }
+
+/* specificity */
+forall<type T>
+struct Show { int (*show)(T *); };
+int show_any(void *p) { return 1; }
+int show_int(int *p) { return 2; }
+forall<type T>
+int show_any_t(T *p) { return 1; }
+mono forall<type T>
+given const Show<T> SHOW_ANY = { .show = show_any_t<T> };
+given const Show<int> SHOW_INT = { .show = show_int };
+forall<type T>
+int show(T *x, implicit Show<T> s) { return s.show(x); }
+
+/* return type inference */
+forall<type T>
+T *null_of(void) { return nullptr; }
+
+int main(void) {
+	array<int, 3> xs = {1, 2, 3}, ys = {1, 2, 3}, zs = {1, 2, 4};
+	Vec<int> a = {xs, 3}, b = {ys, 3}, c = {zs, 3};
+	int i = 1, j = 1;
+	double d = 1.5, e = 2.5;
+	printf(cn"%d %d\n", eq(&i, &j), eq(&d, &e));
+	printf(cn"%d %d\n", eq(&a, &b), eq(&a, &c));
+	Vec<Vec<int>> va = {&a, 1}, vb = {&b, 1}, vc = {&c, 1};
+	printf(cn"%d %d\n", eq(&va, &vb), eq(&va, &vc));
+	printf(cn"%d %d\n", show(&i), show(&d));
+	int *p = null_of();
+	double *q;
+	q = null_of();
+	printf(cn"%d\n", p == nullptr && q == nullptr);
+	return 0;
+}

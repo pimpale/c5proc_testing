@@ -1,0 +1,457 @@
+export
+function w $eq_int(l %.1, l %.3, l %.5) {
+@start.1
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+	%.6 =l alloc8 8
+	storel %.5, %.6
+@body.2
+	%.7 =l loadl %.4
+	%.8 =w loadw %.7
+	%.9 =l loadl %.6
+	%.10 =w loadw %.9
+	%.11 =w ceqw %.8, %.10
+	%.12 =w cnew %.11, 0
+	ret %.12
+}
+export
+function w $eq_dbl(l %.1, l %.3, l %.5) {
+@start.3
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+	%.6 =l alloc8 8
+	storel %.5, %.6
+@body.4
+	%.7 =l loadl %.4
+	%.8 =d loadd %.7
+	%.9 =l loadl %.6
+	%.10 =d loadd %.9
+	%.11 =w ceqd %.8, %.10
+	%.12 =w cnew %.11, 0
+	ret %.12
+}
+export data $EQ_INT_LOGICAL = align 8 { l 0, l $eq_int, }
+export data $EQ_DOUBLE_LOGICAL = align 8 { l 0, l $eq_dbl, }
+export
+function w $eq(l %.1, l %.3, l %.5) {
+@start.5
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+	%.6 =l alloc8 8
+	storel %.5, %.6
+@body.6
+	%.7 =l loadl %.6
+	%.8 =l add %.7, 0
+	%.9 =l loadl %.8
+	%.10 =l loadl %.2
+	%.11 =l loadl %.4
+	%.12 =l loadl %.6
+	%.13 =l add %.12, 8
+	%.14 =l loadl %.13
+	%.15 =w call %.14(l %.9, l %.10, l %.11)
+	ret %.15
+}
+export
+function w $show_any(l %.1) {
+@start.7
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.8
+	ret 1
+}
+export
+function w $show_int(l %.1) {
+@start.9
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.10
+	ret 2
+}
+export
+function w $show_any_t(l %.1) {
+@start.11
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.12
+	ret 1
+}
+export data $SHOW_INT = align 8 { l $show_int, }
+type :Show.1 = { l, }
+export
+function w $show(l %.1, :Show.1 %.3) {
+@start.13
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.14
+	%.4 =l loadl %.2
+	%.5 =l add %.3, 0
+	%.6 =l loadl %.5
+	%.7 =w call %.6(l %.4)
+	ret %.7
+}
+export
+function l $null_of() {
+@start.15
+@body.16
+	ret 0
+}
+data $.Lstring.10 = align 1 { b "%d %d\012\000", }
+type :Eq.2 = { l, l, }
+type :Eq.3 = { l, l, }
+type :Show.4 = { l, }
+type :Show.5 = { l, }
+data $.Lstring.11 = align 1 { b "%d\012\000", }
+export
+function w $main() {
+@start.17
+	%.1 =l alloc4 12
+	%.4 =l alloc4 12
+	%.7 =l alloc4 12
+	%.10 =l alloc8 16
+	%.13 =l alloc8 16
+	%.16 =l alloc8 16
+	%.19 =l alloc4 4
+	%.20 =l alloc4 4
+	%.21 =l alloc8 8
+	%.22 =l alloc8 8
+	%.28 =l alloc8 16
+	%.36 =l alloc8 16
+	%.45 =l alloc8 16
+	%.48 =l alloc8 16
+	%.51 =l alloc8 16
+	%.54 =l alloc8 16
+	%.55 =l alloc8 16
+	%.68 =l alloc8 16
+	%.69 =l alloc8 16
+	%.86 =l alloc8 8
+	%.88 =l alloc8 8
+@body.18
+	storew 1, %.1
+	%.2 =l add %.1, 4
+	storew 2, %.2
+	%.3 =l add %.1, 8
+	storew 3, %.3
+	storew 1, %.4
+	%.5 =l add %.4, 4
+	storew 2, %.5
+	%.6 =l add %.4, 8
+	storew 3, %.6
+	storew 1, %.7
+	%.8 =l add %.7, 4
+	storew 2, %.8
+	%.9 =l add %.7, 8
+	storew 4, %.9
+	storel %.1, %.10
+	%.11 =l add %.10, 8
+	%.12 =l extsw 3
+	storel %.12, %.11
+	storel %.4, %.13
+	%.14 =l add %.13, 8
+	%.15 =l extsw 3
+	storel %.15, %.14
+	storel %.7, %.16
+	%.17 =l add %.16, 8
+	%.18 =l extsw 3
+	storel %.18, %.17
+	storew 1, %.19
+	storew 1, %.20
+	stored d_1.5, %.21
+	stored d_2.5, %.22
+	%.23 =w call extern $eq(l %.19, l %.20, l extern $EQ_INT_LOGICAL)
+	%.24 =w extub %.23
+	%.25 =w call extern $eq(l %.21, l %.22, l extern $EQ_DOUBLE_LOGICAL)
+	%.26 =w extub %.25
+	%.27 =w call extern $printf(l $.Lstring.10, ..., w %.24, w %.26)
+	%.29 =:Eq.2 call extern $"EQ_VEC_LOGICAL<int>"(l extern $EQ_INT_LOGICAL)
+	%.30 =l loadl %.29
+	storel %.30, %.28
+	%.31 =l add %.29, 8
+	%.32 =l add %.28, 8
+	%.33 =l loadl %.31
+	storel %.33, %.32
+	%.34 =w call extern $eq(l %.10, l %.13, l %.28)
+	%.35 =w extub %.34
+	%.37 =:Eq.2 call extern $"EQ_VEC_LOGICAL<int>"(l extern $EQ_INT_LOGICAL)
+	%.38 =l loadl %.37
+	storel %.38, %.36
+	%.39 =l add %.37, 8
+	%.40 =l add %.36, 8
+	%.41 =l loadl %.39
+	storel %.41, %.40
+	%.42 =w call extern $eq(l %.10, l %.16, l %.36)
+	%.43 =w extub %.42
+	%.44 =w call extern $printf(l $.Lstring.10, ..., w %.35, w %.43)
+	storel %.10, %.45
+	%.46 =l add %.45, 8
+	%.47 =l extsw 1
+	storel %.47, %.46
+	storel %.13, %.48
+	%.49 =l add %.48, 8
+	%.50 =l extsw 1
+	storel %.50, %.49
+	storel %.16, %.51
+	%.52 =l add %.51, 8
+	%.53 =l extsw 1
+	storel %.53, %.52
+	%.56 =:Eq.2 call extern $"EQ_VEC_LOGICAL<int>"(l extern $EQ_INT_LOGICAL)
+	%.57 =l loadl %.56
+	storel %.57, %.55
+	%.58 =l add %.56, 8
+	%.59 =l add %.55, 8
+	%.60 =l loadl %.58
+	storel %.60, %.59
+	%.61 =:Eq.3 call extern $"EQ_VEC_LOGICAL<Vec<int>>"(l %.55)
+	%.62 =l loadl %.61
+	storel %.62, %.54
+	%.63 =l add %.61, 8
+	%.64 =l add %.54, 8
+	%.65 =l loadl %.63
+	storel %.65, %.64
+	%.66 =w call extern $eq(l %.45, l %.48, l %.54)
+	%.67 =w extub %.66
+	%.70 =:Eq.2 call extern $"EQ_VEC_LOGICAL<int>"(l extern $EQ_INT_LOGICAL)
+	%.71 =l loadl %.70
+	storel %.71, %.69
+	%.72 =l add %.70, 8
+	%.73 =l add %.69, 8
+	%.74 =l loadl %.72
+	storel %.74, %.73
+	%.75 =:Eq.3 call extern $"EQ_VEC_LOGICAL<Vec<int>>"(l %.69)
+	%.76 =l loadl %.75
+	storel %.76, %.68
+	%.77 =l add %.75, 8
+	%.78 =l add %.68, 8
+	%.79 =l loadl %.77
+	storel %.79, %.78
+	%.80 =w call extern $eq(l %.45, l %.51, l %.68)
+	%.81 =w extub %.80
+	%.82 =w call extern $printf(l $.Lstring.10, ..., w %.67, w %.81)
+	%.83 =w call extern $show(l %.19, :Show.4 extern $SHOW_INT)
+	%.84 =w call extern $show(l %.21, :Show.5 extern $"SHOW_ANY<double>")
+	%.85 =w call extern $printf(l $.Lstring.10, ..., w %.83, w %.84)
+	%.87 =l call extern $null_of()
+	storel %.87, %.86
+	%.89 =l call extern $null_of()
+	storel %.89, %.88
+	%.90 =l loadl %.86
+	%.91 =w ceql %.90, 0
+	jnz %.91, @logic_and.22, @logic_false.20
+@logic_and.22
+	%.92 =l loadl %.88
+	%.93 =w ceql %.92, 0
+	jnz %.93, @logic_true.19, @logic_false.20
+@logic_true.19
+	jmp @logic_join.21
+@logic_false.20
+@logic_join.21
+	%.94 =w phi @logic_true.19 1, @logic_false.20 0
+	%.95 =w call extern $printf(l $.Lstring.11, ..., w %.94)
+	ret 0
+}
+export comdat
+function :Eq.2 $"EQ_VEC_LOGICAL<int>"(l %.1) {
+@start.23
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.3 =l alloc8 16
+@body.24
+	%.4 =l loadl %.2
+	storel %.4, %.3
+	%.5 =l add %.3, 8
+	storel extern $"eq_vec_logical<int>", %.5
+	ret %.3
+}
+export comdat
+function :Eq.3 $"EQ_VEC_LOGICAL<Vec<int>>"(l %.1) {
+@start.25
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.3 =l alloc8 16
+@body.26
+	%.4 =l loadl %.2
+	storel %.4, %.3
+	%.5 =l add %.3, 8
+	storel extern $"eq_vec_logical<Vec<int>>", %.5
+	ret %.3
+}
+export comdat data $"SHOW_ANY<double>" = align 8 { l $show_any_t, }
+export comdat
+function w $"eq_vec_logical<int>"(l %.1, l %.3, l %.5) {
+@start.27
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+	%.6 =l alloc8 8
+	storel %.5, %.6
+	%.7 =l alloc8 8
+	%.9 =l alloc8 8
+	%.16 =l alloc8 8
+@body.28
+	%.8 =l loadl %.2
+	storel %.8, %.7
+	%.10 =l loadl %.4
+	%.11 =l call extern $"vec_len<int>"(l %.10)
+	storel %.11, %.9
+	%.12 =l loadl %.6
+	%.13 =l call extern $"vec_len<int>"(l %.12)
+	%.14 =l loadl %.9
+	%.15 =w cnel %.13, %.14
+	jnz %.15, @if_true.29, @if_false.30
+@if_true.29
+	ret 0
+@if_false.30
+	%.17 =l extsw 0
+	storel %.17, %.16
+@for_cond.31
+	%.18 =l loadl %.16
+	%.19 =l loadl %.9
+	%.20 =w cultl %.18, %.19
+	jnz %.20, @for_body.32, @for_join.34
+@for_body.32
+	%.21 =l loadl %.7
+	%.22 =l add %.21, 0
+	%.23 =l loadl %.22
+	%.24 =l loadl %.4
+	%.25 =l loadl %.16
+	%.26 =l call extern $"vec_at<int>"(l %.24, l %.25)
+	%.27 =l loadl %.6
+	%.28 =l loadl %.16
+	%.29 =l call extern $"vec_at<int>"(l %.27, l %.28)
+	%.30 =l loadl %.7
+	%.31 =l add %.30, 8
+	%.32 =l loadl %.31
+	%.33 =w call %.32(l %.23, l %.26, l %.29)
+	%.34 =w extub %.33
+	jnz %.34, @if_false.36, @if_true.35
+@if_true.35
+	ret 0
+@if_false.36
+@for_cont.33
+	%.35 =l loadl %.16
+	%.36 =l add %.35, 1
+	storel %.36, %.16
+	jmp @for_cond.31
+@for_join.34
+	ret 1
+}
+export comdat
+function w $"eq_vec_logical<Vec<int>>"(l %.1, l %.3, l %.5) {
+@start.37
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+	%.6 =l alloc8 8
+	storel %.5, %.6
+	%.7 =l alloc8 8
+	%.9 =l alloc8 8
+	%.16 =l alloc8 8
+@body.38
+	%.8 =l loadl %.2
+	storel %.8, %.7
+	%.10 =l loadl %.4
+	%.11 =l call extern $"vec_len<Vec<int>>"(l %.10)
+	storel %.11, %.9
+	%.12 =l loadl %.6
+	%.13 =l call extern $"vec_len<Vec<int>>"(l %.12)
+	%.14 =l loadl %.9
+	%.15 =w cnel %.13, %.14
+	jnz %.15, @if_true.39, @if_false.40
+@if_true.39
+	ret 0
+@if_false.40
+	%.17 =l extsw 0
+	storel %.17, %.16
+@for_cond.41
+	%.18 =l loadl %.16
+	%.19 =l loadl %.9
+	%.20 =w cultl %.18, %.19
+	jnz %.20, @for_body.42, @for_join.44
+@for_body.42
+	%.21 =l loadl %.7
+	%.22 =l add %.21, 0
+	%.23 =l loadl %.22
+	%.24 =l loadl %.4
+	%.25 =l loadl %.16
+	%.26 =l call extern $"vec_at<Vec<int>>"(l %.24, l %.25)
+	%.27 =l loadl %.6
+	%.28 =l loadl %.16
+	%.29 =l call extern $"vec_at<Vec<int>>"(l %.27, l %.28)
+	%.30 =l loadl %.7
+	%.31 =l add %.30, 8
+	%.32 =l loadl %.31
+	%.33 =w call %.32(l %.23, l %.26, l %.29)
+	%.34 =w extub %.33
+	jnz %.34, @if_false.46, @if_true.45
+@if_true.45
+	ret 0
+@if_false.46
+@for_cont.43
+	%.35 =l loadl %.16
+	%.36 =l add %.35, 1
+	storel %.36, %.16
+	jmp @for_cond.41
+@for_join.44
+	ret 1
+}
+export comdat
+function l $"vec_len<int>"(l %.1) {
+@start.47
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.48
+	%.3 =l loadl %.2
+	%.4 =l add %.3, 8
+	%.5 =l loadl %.4
+	ret %.5
+}
+export comdat
+function l $"vec_at<int>"(l %.1, l %.3) {
+@start.49
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+@body.50
+	%.5 =l loadl %.2
+	%.6 =l add %.5, 0
+	%.7 =l loadl %.6
+	%.8 =l loadl %.4
+	%.9 =l mul %.8, 4
+	%.10 =l add %.7, %.9
+	ret %.10
+}
+export comdat
+function l $"vec_len<Vec<int>>"(l %.1) {
+@start.51
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.52
+	%.3 =l loadl %.2
+	%.4 =l add %.3, 8
+	%.5 =l loadl %.4
+	ret %.5
+}
+export comdat
+function l $"vec_at<Vec<int>>"(l %.1, l %.3) {
+@start.53
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+@body.54
+	%.5 =l loadl %.2
+	%.6 =l add %.5, 0
+	%.7 =l loadl %.6
+	%.8 =l loadl %.4
+	%.9 =l mul %.8, 16
+	%.10 =l add %.7, %.9
+	ret %.10
+}

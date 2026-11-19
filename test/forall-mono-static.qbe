@@ -2,13 +2,14 @@ export
 function $f() {
 @start.1
 @body.2
-	%.1 =w call $"count<int>"()
-	%.2 =w call $"count<double>"()
-	%.3 =l call $"slot<short>"()
-	%.4 =l call $"size<long>"()
+	%.1 =w call extern $"count<int>"()
+	%.2 =w call extern $"count<double>"()
+	%.3 =l call extern $"slot<short>"()
+	%.4 =l call extern $"size<long>"()
 	ret
 }
 data $.Ln.3 = align 4 { z 4 }
+export comdat
 function w $"count<int>"() {
 @start.3
 @body.4
@@ -18,6 +19,7 @@ function w $"count<int>"() {
 	ret %.2
 }
 data $.Ln.5 = align 4 { z 4 }
+export comdat
 function w $"count<double>"() {
 @start.5
 @body.6
@@ -27,12 +29,14 @@ function w $"count<double>"() {
 	ret %.2
 }
 data $.Lvalue.7 = align 2 { z 2 }
+export comdat
 function l $"slot<short>"() {
 @start.7
 @body.8
 	ret $.Lvalue.7
 }
 data $.Ls.9 = align 8 { l 8, }
+export comdat
 function l $"size<long>"() {
 @start.9
 @body.10

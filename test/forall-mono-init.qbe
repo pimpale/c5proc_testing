@@ -10,7 +10,7 @@ function $f(l %.1) {
 	%.2 =l alloc8 8
 	storel %.1, %.2
 @body.2
-	%.3 =:Box.1 call $"mkbox<int>"(w 1, w 2)
+	%.3 =:Box.1 call extern $"mkbox<int>"(w 1, w 2)
 	%.4 =l loadl %.2
 	%.5 =l extsw 0
 	%.6 =l mul %.5, 24
@@ -19,15 +19,16 @@ function $f(l %.1) {
 	%.9 =l extsw 1
 	%.10 =l mul %.9, 24
 	%.11 =l add %.8, %.10
-	%.12 =:Box.4 call $"mkbox<big>"(:big.3 %.7, :big.3 %.11)
+	%.12 =:Box.4 call extern $"mkbox<big>"(:big.3 %.7, :big.3 %.11)
 	%.13 =l loadl %.2
 	%.14 =l extsw 0
 	%.15 =l mul %.14, 24
 	%.16 =l add %.13, %.15
-	%.17 =:Pair.5 call $"mkpair<big>"(:big.3 %.16)
-	%.18 =:Pair.6 call $"zeroed<short>"()
+	%.17 =:Pair.5 call extern $"mkpair<big>"(:big.3 %.16)
+	%.18 =:Pair.6 call extern $"zeroed<short>"()
 	ret
 }
+export comdat
 function :Box.1 $"mkbox<int>"(w %.1, w %.3) {
 @start.3
 	%.2 =l alloc4 4
@@ -54,17 +55,16 @@ function :Box.1 $"mkbox<int>"(w %.1, w %.3) {
 	%.14 =l add %.5, 17
 	storeb 98, %.14
 	%.15 =l add %.5, 18
-	storeb 0, %.15
-	%.16 =l add %.5, 19
-	storeb 0, %.16
-	%.17 =l add %.5, 20
-	%.18 =w loadw %.4
-	storew %.18, %.17
-	%.19 =l add %.5, 24
-	%.20 =w loadw %.2
-	storew %.20, %.19
+	storeh 0, %.15
+	%.16 =l add %.5, 20
+	%.17 =w loadw %.4
+	storew %.17, %.16
+	%.18 =l add %.5, 24
+	%.19 =w loadw %.2
+	storew %.19, %.18
 	ret %.5
 }
+export comdat
 function :Box.4 $"mkbox<big>"(:big.3 %.1, :big.3 %.2) {
 @start.5
 	%.3 =l alloc8 120
@@ -107,35 +107,34 @@ function :Box.4 $"mkbox<big>"(:big.3 %.1, :big.3 %.2) {
 	%.26 =l add %.3, 65
 	storeb 98, %.26
 	%.27 =l add %.3, 66
-	storeb 0, %.27
-	%.28 =l add %.3, 67
-	storeb 0, %.28
-	%.29 =l add %.3, 68
-	storew 0, %.29
-	%.30 =l add %.3, 72
-	%.31 =l loadl %.2
-	storel %.31, %.30
-	%.32 =l add %.2, 8
-	%.33 =l add %.30, 8
-	%.34 =l loadl %.32
-	storel %.34, %.33
+	storeh 0, %.27
+	%.28 =l add %.3, 68
+	storew 0, %.28
+	%.29 =l add %.3, 72
+	%.30 =l loadl %.2
+	storel %.30, %.29
+	%.31 =l add %.2, 8
+	%.32 =l add %.29, 8
+	%.33 =l loadl %.31
+	storel %.33, %.32
+	%.34 =l add %.31, 8
 	%.35 =l add %.32, 8
-	%.36 =l add %.33, 8
-	%.37 =l loadl %.35
-	storel %.37, %.36
-	%.38 =l add %.3, 96
-	%.39 =l loadl %.1
-	storel %.39, %.38
-	%.40 =l add %.1, 8
-	%.41 =l add %.38, 8
-	%.42 =l loadl %.40
-	storel %.42, %.41
+	%.36 =l loadl %.34
+	storel %.36, %.35
+	%.37 =l add %.3, 96
+	%.38 =l loadl %.1
+	storel %.38, %.37
+	%.39 =l add %.1, 8
+	%.40 =l add %.37, 8
+	%.41 =l loadl %.39
+	storel %.41, %.40
+	%.42 =l add %.39, 8
 	%.43 =l add %.40, 8
-	%.44 =l add %.41, 8
-	%.45 =l loadl %.43
-	storel %.45, %.44
+	%.44 =l loadl %.42
+	storel %.44, %.43
 	ret %.3
 }
+export comdat
 function :Pair.5 $"mkpair<big>"(:big.3 %.1) {
 @start.7
 	%.2 =l alloc8 64
@@ -168,6 +167,7 @@ function :Pair.5 $"mkpair<big>"(:big.3 %.1) {
 	storel 0, %.17
 	ret %.2
 }
+export comdat
 function :Pair.6 $"zeroed<short>"() {
 @start.9
 	%.1 =l alloc4 10

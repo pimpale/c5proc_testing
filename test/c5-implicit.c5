@@ -1,0 +1,27 @@
+int printf(const char *, ...);
+int foo(int a, int b, int c, int d) { return a * 1000 + b * 100 + c * 10 + d; }
+
+forall<type T>
+typedef struct { T (*add)(T, T); } Add;
+
+mono forall<type T>
+T add(T a, T b, implicit Add<T> add_vtable) { return add_vtable.add(a, b); }
+
+int addInt(int a, int b) { return a + b; }
+int addIntTrapping(int a, int b) { return a + b + 1000; }
+double addDouble(double a, double b) { return a + b; }
+given const Add<double> ADD_DOUBLE = { .add = addDouble };
+
+int main(void) {
+	printf(cn"%d\n", foo(1, 2, .d=4, .c=3));
+	given Add<int> add_int = { .add = addInt };
+	printf(cn"%d\n", add<int>(1, 2));
+	printf(cn"%d\n", add(3, 4));
+	printf(cn"%g\n", add(1.5, 2.0));
+	{
+		given Add<int> trap = { .add = addIntTrapping };
+		printf(cn"%d\n", add(1, 2));
+		printf(cn"%d\n", add<int>(1, 2, .add_vtable=add_int));
+	}
+	return 0;
+}

@@ -1,0 +1,1 @@
+int f(int a, implicit long scale); int g(void) { return f(1); }

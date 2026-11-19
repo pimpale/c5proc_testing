@@ -14,10 +14,10 @@ function l $f(l %.1) {
 	storel %.1, %.2
 	%.3 =l alloc4 16
 @body.4
-	%.4 =w call $"last<int, 4>"(l %.3)
+	%.4 =w call extern $"last<int, 4>"(l %.3)
 	%.5 =l extsw %.4
 	%.6 =l loadl %.2
-	%.7 =l call $"grow<long, 3>"(l %.6)
+	%.7 =l call extern $"grow<long, 3>"(l %.6)
 	%.8 =l add %.5, %.7
 	%.9 =l call extern $first(l %.3)
 	%.10 =w loadw %.9
@@ -26,6 +26,7 @@ function l $f(l %.1) {
 	%.13 =l add %.12, 16
 	ret %.13
 }
+export comdat
 function w $"last<int, 4>"(l %.1) {
 @start.5
 	%.2 =l alloc8 8
@@ -39,6 +40,7 @@ function w $"last<int, 4>"(l %.1) {
 	%.8 =w loadw %.7
 	ret %.8
 }
+export comdat
 function l $"grow<long, 3>"(l %.1) {
 @start.7
 	%.2 =l alloc8 8

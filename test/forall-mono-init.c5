@@ -3,14 +3,14 @@ struct Pair {
 	char tag;
 	T first;
 	T second;
-	char name[4];
+	array<char, 4> name;
 };
 
 mono forall<type T>
 struct Box {
 	int n;
 	struct Pair<T> pair;
-	T arr[2];
+	array<T, 2> arr;
 };
 
 mono forall<type T>

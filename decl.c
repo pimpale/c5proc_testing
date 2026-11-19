@@ -33,6 +33,8 @@ enum storageclass {
 	SCAUTO        = 1<<4,
 	SCREGISTER    = 1<<5,
 	SCTHREADLOCAL = 1<<6,
+	/* not a storage class, but written among them */
+	SCGIVEN       = 1<<7,
 };
 
 enum typespec {
@@ -103,11 +105,19 @@ storageclass(enum storageclass *sc)
 	case TTHREAD_LOCAL:  new = SCTHREADLOCAL; break;
 	case TAUTO:          new = SCAUTO;        break;
 	case TREGISTER:      new = SCREGISTER;    break;
+	case T_GIVEN:        new = SCGIVEN;       break;
 	default: return 0;
 	}
 	if (!sc)
 		error(&tok.loc, "storage class not allowed in this declaration");
-	switch (*sc & ~SCAUTO) {
+	if (new == SCGIVEN) {
+		if (*sc & SCGIVEN)
+			error(&tok.loc, "duplicate 'given'");
+		*sc |= SCGIVEN;
+		next();
+		return 1;
+	}
+	switch (*sc & ~(SCAUTO|SCGIVEN)) {
 	case SCNONE:        allowed = ~SCNONE;           break;
 	case SCTHREADLOCAL: allowed = SCSTATIC|SCEXTERN; break;
 	case SCSTATIC:
@@ -116,10 +126,10 @@ storageclass(enum storageclass *sc)
 	}
 	/* C23 6.7.1p2: auto may appear with any storage-class specifier except typedef */
 	if (new == SCAUTO)
-		allowed = *sc & (SCAUTO|SCTYPEDEF) ? SCNONE : SCAUTO;
+		allowed = *sc & (SCAUTO|SCTYPEDEF) ? SCNONE : SCAUTO|SCGIVEN;
 	else if (*sc & SCAUTO && new == SCTYPEDEF)
 		allowed = SCNONE;
-	if (new & ~allowed)
+	if (new & ~(allowed | SCGIVEN))
 		error(&tok.loc, "invalid combination of storage class specifiers");
 	*sc |= new;
 	next();
@@ -173,6 +183,66 @@ funcspec(enum funcspec *fs)
 
 static void structdecl(struct scope *, struct structbuilder *);
 static struct qualtype declspecs(struct scope *, enum storageclass *, enum funcspec *, int *);
+static void arrayfinish(struct type *);
+
+/*
+In C5 files, the tag of a struct, union, or enum also names its type,
+unless it is hidden by an ordinary identifier, as in C++.
+*/
+static struct type *
+tagtype(struct scope *s, const char *name)
+{
+	struct mapkey k;
+	struct type *t;
+
+	mapkey(&k, name, strlen(name));
+	for (; s; s = s->parent) {
+		if (s->decls.len && mapget(&s->decls, &k, NULL))
+			return NULL;
+		t = s->tags.len ? mapget(&s->tags, &k, NULL) : NULL;
+		if (t)
+			return t;
+	}
+	return NULL;
+}
+
+/* parse the argument list of an array<T, N> or slice<T> type */
+static struct type *
+builtingeneric(struct scope *s, enum tokenkind kind)
+{
+	struct type *t, *elem;
+	enum typequal q;
+	struct expr *e;
+
+	next();
+	expect(TLESS, kind == T_ARRAY ? "after 'array'" : "after 'slice'");
+	q = QUALNONE;
+	elem = typename(s, &q, NULL);
+	if (!elem)
+		error(&tok.loc, "expected element type");
+	if (kind == T_SLICE) {
+		closeangle();
+		if (elem->kind == TYPEFUNC)
+			error(&tok.loc, "slice element has function type");
+		return mkslicetype(elem, q);
+	}
+	expect(TCOMMA, "after array element type");
+	allowerasedsize = true;
+	e = sizeargexpr(s);
+	allowerasedsize = false;
+	closeangle();
+	if (elem->incomplete)
+		error(&tok.loc, "array element has incomplete type");
+	if (elem->kind == TYPEFUNC)
+		error(&tok.loc, "array element has function type");
+	t = mkarraytype(elem, q, 0);
+	t->prop |= elem->prop & PROPVM;
+	t->u.array.byvalue = true;
+	t->u.array.length = e;
+	t->incomplete = false;
+	arrayfinish(t);
+	return t;
+}
 
 static struct type *
 tagspec(struct scope *s)
@@ -519,12 +589,32 @@ declspecs(struct scope *s, enum storageclass *sc, enum funcspec *fs, int *align)
 			gnuattr(NULL, 0);
 			break;
 
+		case T_ARRAY:
+		case T_SLICE:
+			if (t || ts)
+				goto done;
+			t = builtingeneric(s, op);
+			++ntypes;
+			break;
+
 		default:
 			if (op < TIDENT || t || ts)
 				goto done;
 			d = scopegetdecl(s, tokenstr(tok.kind), 1);
-			if (!d || d->kind != DECLTYPE)
-				goto done;
+			if (!d || d->kind != DECLTYPE) {
+				other = c5file(tok.loc.file) ? tagtype(s, tokenstr(tok.kind)) : NULL;
+				if (!other)
+					goto done;
+				t = other;
+				++ntypes;
+				next();
+				if (t->kind != TYPEENUM && t->u.structunion.gen) {
+					if (tok.kind != TLESS)
+						error(&tok.loc, "%s '%s' requires type arguments", t->kind == TYPESTRUCT ? "struct" : "union", t->u.structunion.tag);
+					t = geninst(t->u.structunion.gen, genargs(s, t->u.structunion.gen, false), &tq);
+				}
+				break;
+			}
 			t = d->type;
 			tq |= d->qual;
 			++ntypes;
@@ -611,7 +701,31 @@ istypename(struct scope *s, const char *name)
 	struct decl *d;
 
 	d = scopegetdecl(s, name, 1);
-	return d && d->kind == DECLTYPE;
+	if (d)
+		return d->kind == DECLTYPE;
+	return c5file(tok.loc.file) && tagtype(s, name);
+}
+
+/* whether the current token starts a type name */
+bool
+istypestart(struct scope *s)
+{
+	struct decl *d;
+
+	switch (tok.kind) {
+	case TVOID: case TCHAR: case TSHORT: case TINT: case TLONG: case TFLOAT: case TDOUBLE:
+	case TSIGNED: case TUNSIGNED: case T_BITINT: case TBOOL: case T_COMPLEX: case T_ATOMIC:
+	case TSTRUCT: case TUNION: case TENUM: case TTYPEOF: case TTYPEOF_UNQUAL:
+	case TCONST: case TVOLATILE: case TRESTRICT: case T_ARRAY: case T_SLICE:
+		return true;
+	}
+	if (tok.kind < TIDENT)
+		return false;
+	if (istypename(s, tokenstr(tok.kind)))
+		return true;
+	/* constness parameter */
+	d = scopegetdecl(s, tokenstr(tok.kind), true);
+	return d && d->kind == DECLCONST && d->gen && d->gen->params[d->u.enumconst].kind == GENCONSTNESS;
 }
 
 /*
@@ -722,6 +836,8 @@ declaratortypes(struct scope *s, struct list *result, char **name, int *align, s
 		case TLBRACK:  /* array declarator */
 			if (allowedattr != -1 && attr(&a, allowedattr))
 				goto attr;
+			if (c5file(tok.loc.file))
+				error(&tok.loc, "C arrays are not allowed in C5 files; use array<T, N>");
 			next();
 			t = mkarraytype(NULL, QUALNONE, 0);
 			while (consume(TSTATIC) || typequal(s, &t->u.array.ptrqual))
@@ -759,12 +875,50 @@ declaratortypes(struct scope *s, struct list *result, char **name, int *align, s
 	}
 }
 
+/* compute the size of an array type from its element type and length expression */
+static void
+arrayfinish(struct type *t)
+{
+	struct type *base = t->base;
+	struct expr *e;
+
+	t->align = base->align;
+	t->size = 0;
+	if (!t->u.array.length)
+		return;
+	e = eval(t->u.array.length);
+	if (e->kind == EXPRCONST && typedep(base)) {
+		/* the size is computed when the element type is known */
+		if (e->type->u.arith.issigned && e->u.constant.u >> 63)
+			error(&tok.loc, "array length must be non-negative");
+		t->u.array.length = e;
+	} else if (exprdep(e)) {
+		/* the length is computed for each instance, or never known if it is erased */
+		t->prop |= PROPDEPLEN;
+		t->u.array.length = e;
+		if (exprhasparamkind(e, false))
+			t->incomplete = true;
+	} else if (e->kind == EXPRCONST && (base->size || t->u.array.byvalue)) {
+		if (e->type->u.arith.issigned && e->u.constant.u >> 63)
+			error(&tok.loc, "array length must be non-negative");
+		if (base->size && e->u.constant.u > ULLONG_MAX / base->size)
+			error(&tok.loc, "array length is too large");
+		t->size = base->size * e->u.constant.u;
+		t->u.array.length = e;
+	} else {
+		if (t->u.array.byvalue)
+			error(&tok.loc, "array length must be an integer constant expression");
+		t->prop |= PROPVM;
+		t->u.array.length = e;
+		t->u.array.size = NULL;
+	}
+}
+
 static struct qualtype
 declarator(struct scope *s, struct qualtype base, char **name, int *align, struct scope **funcscope, bool allowabstract)
 {
 	struct type *t;
 	enum typequal tq;
-	struct expr *e;
 	struct list result = {&result, &result}, *l, *prev;
 
 	if (funcscope)
@@ -781,7 +935,7 @@ declarator(struct scope *s, struct qualtype base, char **name, int *align, struc
 		case TYPEFUNC:
 			if (base.type->kind == TYPEFUNC)
 				error(&tok.loc, "function declarator specifies function return type");
-			if (base.type->kind == TYPEARRAY)
+			if (base.type->kind == TYPEARRAY && !base.type->u.array.byvalue)
 				error(&tok.loc, "function declarator specifies array return type");
 			break;
 		case TYPEARRAY:
@@ -797,33 +951,7 @@ declarator(struct scope *s, struct qualtype base, char **name, int *align, struc
 				if (prev != &result)
 					error(&tok.loc, "nested array type has qualifiers");
 			}
-			t->align = base.type->align;
-			t->size = 0;
-			if (t->u.array.length) {
-				e = eval(t->u.array.length);
-				if (e->kind == EXPRCONST && typedep(base.type)) {
-					/* the size is computed when the element type is known */
-					if (e->type->u.arith.issigned && e->u.constant.u >> 63)
-						error(&tok.loc, "array length must be non-negative");
-					t->u.array.length = e;
-				} else if (exprdep(e)) {
-					/* the length is computed for each instance, or never known if it is erased */
-					t->prop |= PROPDEPLEN;
-					t->u.array.length = e;
-					if (exprhasparamkind(e, false))
-						t->incomplete = true;
-				} else if (e->kind == EXPRCONST && base.type->size) {
-					if (e->type->u.arith.issigned && e->u.constant.u >> 63)
-						error(&tok.loc, "array length must be non-negative");
-					if (e->u.constant.u > ULLONG_MAX / base.type->size)
-						error(&tok.loc, "array length is too large");
-					t->size = base.type->size * e->u.constant.u;
-				} else {
-					t->prop |= PROPVM;
-					t->u.array.length = e;
-					t->u.array.size = NULL;
-				}
-			}
+			arrayfinish(t);
 			break;
 		}
 		base.type = t;
@@ -840,8 +968,10 @@ parameter(struct scope *s)
 	char *name;
 	struct qualtype t;
 	enum storageclass sc;
+	bool implicit;
 
 	attr(NULL, 0);
+	implicit = consume(T_IMPLICIT);
 	t = declspecs(s, &sc, NULL, NULL);
 	if (!t.type)
 		error(&tok.loc, "no type in parameter declaration");
@@ -851,6 +981,7 @@ parameter(struct scope *s)
 	t.type = typeadjust(t.type, &t.qual);
 	d = mkdecl(name, DECLOBJECT, t.type, t.qual, LINKNONE);
 	d->u.obj.storage = SDAUTO;
+	d->implicit = implicit;
 	return d;
 }
 
@@ -879,30 +1010,6 @@ addmember(struct structbuilder *b, struct qualtype mt, char *name, int align, un
 		error(&tok.loc, "struct member '%s' has function type", name);
 	if (mt.type->prop & PROPVM)
 		error(&tok.loc, "struct member '%s' has variably modified type", name);
-	if (mt.type->kind == TYPEPARAM && mt.type->u.param.gen == t->u.structunion.exists) {
-		/*
-		A mono existential parameter can be the type of the last
-		member, which is unsized like a flexible array member.
-		*/
-		if (!mt.type->u.param.gen->ismono)
-			error(&tok.loc, "struct member '%s' has incomplete type", name);
-		if (t->kind != TYPESTRUCT || !align)
-			error(&tok.loc, "member '%s' with existential type must be in a struct and have an alignment specifier", name);
-		m = xmalloc(sizeof(*m));
-		m->type = mt.type;
-		m->qual = mt.qual;
-		m->name = name;
-		m->next = NULL;
-		m->bits = (struct bitfield){0};
-		m->offset = ALIGNUP(t->size, align);
-		t->size = m->offset;
-		if (t->align < align)
-			t->align = align;
-		*b->last = m;
-		b->last = &m->next;
-		t->prop |= PROPFLEX;
-		return;
-	}
 	/* the layout of a mono struct is computed for each instance */
 	if (typedep(mt.type) && !(t->u.structunion.gen && t->u.structunion.gen->ismono))
 		error(&tok.loc, "member '%s' with type depending on mono parameters requires a mono forall %s", name, t->kind == TYPESTRUCT ? "struct" : "union");
@@ -1170,6 +1277,9 @@ inferinit(struct scope *s, struct type **t)
 		consume(TCOMMA);
 		expect(TRBRACE, "after initializer");
 	}
+	/* a C5 array is copied */
+	if (e->decayed && e->base->type->kind == TYPEARRAY && e->base->type->u.array.byvalue)
+		e = e->base;
 	*t = e->type;
 	if (*t == &typevoid)
 		error(&tok.loc, "cannot infer type from expression with type 'void'");
@@ -1279,7 +1389,10 @@ genparams(struct scope *s, struct generic **exists)
 	}
 	ex = NULL;
 	if (consume(T_EXISTS)) {
-		ex = mkgeneric(ismono);
+		/* existential parameters are always erased */
+		if (ismono && !g)
+			error(&tok.loc, "mono exists is not supported");
+		ex = mkgeneric(false);
 		paramlist(s, ex, "after 'exists'");
 		for (i = 0; i < ex->nparam; ++i) {
 			if (ex->params[i].kind != GENTYPE)
@@ -1292,6 +1405,78 @@ genparams(struct scope *s, struct generic **exists)
 		error(&tok.loc, "'exists' must come after 'forall'");
 	*exists = ex;
 	return g;
+}
+
+/* make d a candidate for implicit parameters in s */
+static void
+addgiven(struct scope *s, struct decl *d)
+{
+	if (d->given)
+		return;
+	d->given = true;
+	d->nextgiven = s->givens;
+	s->givens = d;
+}
+
+/*
+The parameters of a given function are its premises, which are resolved
+implicitly. Each must be no more complex than the result, and mention no
+type parameter more often than the result does (the Paterson conditions),
+so that resolving premises terminates.
+*/
+static void
+checkgivenfunc(struct type *t, struct generic *gen, char *name)
+{
+	struct decl *p;
+	struct type *pt;
+	size_t i;
+
+	if (t->u.func.isvararg)
+		error(&tok.loc, "given function '%s' cannot be variadic", name);
+	for (p = t->u.func.params; p; p = p->next) {
+		p->implicit = true;
+		pt = p->type->kind == TYPEPOINTER ? p->type->base : p->type;
+		if (typecomplexity(pt) > typecomplexity(t->base))
+			error(&tok.loc, "premise '%s' of given function '%s' is more complex than its result", p->name ? p->name : "<unnamed>", name);
+		for (i = 0; gen && i < gen->nparam; ++i) {
+			if (gen->params[i].kind == GENTYPE && typeoccurs(pt, gen->params[i].type) > typeoccurs(t->base, gen->params[i].type))
+				error(&tok.loc, "premise '%s' of given function '%s' mentions type parameter '%s' more often than its result", p->name ? p->name : "<unnamed>", name, gen->params[i].name);
+		}
+	}
+}
+
+/* a forall given can only be selected if its type determines its type parameters */
+static void
+checkgivenparams(struct type *t, struct generic *gen, char *name)
+{
+	size_t i;
+
+	for (i = 0; gen && i < gen->nparam; ++i) {
+		if (gen->params[i].kind == GENTYPE && !typeoccurs(t, gen->params[i].type))
+			error(&tok.loc, "type parameter '%s' of given '%s' does not appear in its type", gen->params[i].name, name);
+	}
+}
+
+/* parse a binding of a destructuring pattern: auto or a type name, with an optional identifier */
+struct decl *
+patternbinding(struct scope *s)
+{
+	struct qualtype t;
+	char *name;
+
+	if (consume(TAUTO)) {
+		name = NULL;
+		if (tok.kind >= TIDENT) {
+			name = tokenstr(tok.kind);
+			next();
+		}
+		return mkdecl(name, DECLALIAS, NULL, QUALNONE, LINKNONE);
+	}
+	t = declspecs(s, NULL, NULL, NULL);
+	if (!t.type)
+		error(&tok.loc, "expected type or 'auto' in pattern");
+	t = declarator(s, t, &name, NULL, NULL, true);
+	return mkdecl(name, DECLALIAS, t.type, t.qual, LINKNONE);
 }
 
 /* check that an erased function does not pass or return a type parameter by value */
@@ -1333,6 +1518,8 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 	enum typequal q;
 	size_t i;
 	int align;
+	bool given;
+	struct decl *p;
 
 	if (staticassert(s, fc && fc->mono ? end : NULL))
 		return true;
@@ -1363,6 +1550,8 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 		pendingexists = NULL;
 		error(&tok.loc, "exists can only be used in struct and union declarations");
 	}
+	given = sc & SCGIVEN;
+	sc &= ~SCGIVEN;
 	if (!base.type) {
 		if (gen)
 			error(&tok.loc, "expected declaration after forall parameter list");
@@ -1438,6 +1627,8 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 		}
 		switch (kind) {
 		case DECLTYPE:
+			if (given)
+				error(&tok.loc, "typedef '%s' cannot be given", name);
 			if (align)
 				error(&tok.loc, "typedef '%s' declared with alignment specifier", name);
 			if (asmname)
@@ -1470,6 +1661,10 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 				d->gen = gen;
 			if (gen && !gen->ismono != !d->gen->ismono)
 				error(&tok.loc, "'%s' redeclared with different mono and erased behavior", name);
+			if (given) {
+				checkgivenparams(qt.type, gen, name);
+				addgiven(s, d);
+			}
 			if (d->u.obj.align < align)
 				d->u.obj.align = align;
 			if (gen && gen->ismono) {
@@ -1541,6 +1736,13 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 				d->gen = gen;
 			if (gen && !gen->ismono != !d->gen->ismono)
 				error(&tok.loc, "'%s' redeclared with different mono and erased behavior", name);
+			if (given || d->given) {
+				checkgivenparams(qt.type->base, gen, name);
+				checkgivenfunc(qt.type, gen, name);
+				if (d->type != qt.type)
+					checkgivenfunc(d->type, NULL, name);
+				addgiven(s, d);
+			}
 			d->value = mkglobal(d);
 			d->u.func.inlinedefn = d->linkage == LINKEXTERN && fs & FUNCINLINE && !(sc & SCEXTERN) && (!prior || prior->u.func.inlinedefn);
 			d->u.func.isnoreturn = fs & FUNCNORETURN || a.kind & ATTRNORETURN;
@@ -1552,6 +1754,11 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 				/* re-open scope from function declarator */
 				assert(funcscope);
 				s = funcscope;
+				/* implicit parameters are given in the body */
+				for (p = qt.type->u.func.params; p; p = p->next) {
+					if (p->implicit && p->name)
+						addgiven(s, p);
+				}
 				if (gen && gen->ismono) {
 					/* the body is checked once, and instantiated for each set of arguments */
 					d->u.func.namedecl = mkdecl("__func__", DECLOBJECT, mkarraytype(&typechar, QUALCONST, strlen(name) + 1), QUALNONE, LINKNONE);

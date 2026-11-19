@@ -133,6 +133,8 @@ struct type {
 			struct expr *length;
 			enum typequal ptrqual;
 			struct value *size;
+			/* a C5 array<T, N>, which is passed, returned, and assigned by value */
+			bool byvalue;
 		} array;
 		struct {
 			bool isvararg;
@@ -169,6 +171,8 @@ enum declkind {
 	DECLFUNC,
 	DECLCONST,
 	DECLBUILTIN,
+	/* name bound by a destructuring pattern, which refers to part of the destructured object */
+	DECLALIAS,
 };
 
 enum linkage {
@@ -212,6 +216,13 @@ struct decl {
 	struct decl *next;
 	/* parameters, if this is a generic or template declaration */
 	struct generic *gen;
+	/* an implicit parameter, which is resolved from the givens in scope when not passed by name */
+	bool implicit;
+	/* declared with given, so a candidate for implicit parameters; linked through nextgiven in its scope */
+	bool given;
+	struct decl *nextgiven;
+	/* an instance with external linkage, which is defined by every translation unit that uses it and merged by the linker */
+	bool comdat;
 
 	union {
 		struct {
@@ -247,12 +258,16 @@ struct decl {
 		} func;
 		unsigned long long enumconst;
 		enum builtinkind builtin;
+		/* for DECLALIAS, the expression it stands for, copied for each use */
+		struct expr *alias;
 	} u;
 };
 
 struct scope {
 	struct map tags;
 	struct map decls;
+	/* givens declared in this scope, most recent first */
+	struct decl *givens;
 	/* innermost enclosing statements targeted by break, continue, and case labels */
 	struct stmt *breakstmt;
 	struct stmt *continuestmt;
@@ -323,6 +338,8 @@ struct expr {
 			struct decl *decl;
 			/* explicit arguments of a generic function whose arguments are not all known */
 			struct genarg *genargs;
+			/* type expected of the result if this generic function is called, for inference */
+			struct type *expected;
 		} ident;
 		union {
 			unsigned long long u;
@@ -430,6 +447,7 @@ void ppinit(void);
 bool c5file(const char *);
 void next(void);
 bool peek(enum tokenkind);
+bool peekbraces(enum tokenkind);
 char *expect(enum tokenkind, const char *);
 bool consume(enum tokenkind);
 
@@ -521,6 +539,22 @@ bool argssame(struct generic *, struct genarg *, struct genarg *);
 enum typequal qualsubst(enum typequal, struct generic *, struct genarg *);
 bool qualsubset(enum typequal, enum typequal);
 void closeangle(void);
+struct type *mkslicetype(struct type *, enum typequal);
+bool typeisslice(struct type *);
+struct generic *genfresh(struct generic *, struct genarg **);
+size_t typecomplexity(struct type *);
+size_t typeoccurs(struct type *, struct type *);
+char *typespelling(struct type *, enum typequal);
+
+/* state of a two-way unification (see unify) */
+struct unifier {
+	struct generic *g[2];
+	struct genarg *bind[2];
+};
+
+bool unify(struct unifier *, struct type *, enum typequal, struct type *, enum typequal);
+struct type *unifyresolve(struct unifier *, struct type *, enum typequal *);
+struct expr *unifyresolvesize(struct unifier *, struct expr *);
 
 /* mono */
 
@@ -568,6 +602,8 @@ bool gnuattr(struct attr *, enum attrkind);
 struct decl *mkdecl(char *name, enum declkind, struct type *, enum typequal, enum linkage);
 bool decl(struct scope *, struct funcctx *, struct stmt ***);
 struct type *typename(struct scope *, enum typequal *, struct expr **);
+bool istypestart(struct scope *);
+struct decl *patternbinding(struct scope *);
 
 struct decl *stringdecl(struct expr *);
 void structlayout(struct type *, struct type *);
@@ -605,6 +641,16 @@ void delexpr(struct expr *);
 
 struct expr *exprassign(struct expr *, struct type *);
 struct expr *exprpromote(struct expr *);
+void exprexpect(struct type *);
+struct expr *exprconst(struct type *, unsigned long long);
+struct expr *exprcompound(struct scope *, struct type *);
+struct expr *exprdup(struct expr *);
+struct expr *exprident(struct decl *);
+struct expr *exprmember(struct expr *, struct type *, struct member *, unsigned long long, struct genarg *);
+struct expr *exprcompare(enum tokenkind, struct expr *, struct expr *);
+struct expr *exprtemp(struct type *);
+struct expr *exprunarray(struct expr *);
+struct genarg *exopen(struct generic *);
 
 /* eval */
 
@@ -706,6 +752,12 @@ struct stmt {
 			bool hasdefault;
 			/* filled in during lowering */
 			struct switchcases cases;
+			/* for a switch on a struct or union, the object that case patterns are matched against */
+			struct expr *subject;
+			/* for a switch on an integer, a temporary for its value, which case ranges are compared with */
+			struct expr *temp;
+			/* case labels with a pattern or range, which are tested in order, before the other cases */
+			struct stmt *tests;
 		} switchstmt;
 		/* while, do, and for statements */
 		struct {
@@ -717,6 +769,15 @@ struct stmt {
 		struct {
 			struct stmt *switchstmt;
 			unsigned long long value;
+			/*
+			for a case label with a pattern or range, the
+			condition for it to match (NULL if it always does),
+			its block, and the next such case of the switch
+			*/
+			bool istest;
+			struct expr *cond;
+			struct block *block;
+			struct stmt *nexttest;
 		} caselabel;
 		struct {
 			char *name;

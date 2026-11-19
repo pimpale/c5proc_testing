@@ -1,0 +1,1 @@
+int f(int p) { switch (p) { case {1}: return 1; } return 0; }

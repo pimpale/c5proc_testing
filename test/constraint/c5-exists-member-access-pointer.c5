@@ -1,0 +1,2 @@
+exists<type D> struct A { D *data; void (*use)(D *); };
+void f(const A *const p) { p->use(p->data); }

@@ -87,6 +87,52 @@ mkconstexpr(struct type *t, unsigned long long n)
 }
 
 static struct expr *mkunaryexpr(enum tokenkind, struct expr *);
+static struct expr *mkbinaryexpr(struct location *, enum tokenkind, struct expr *, struct expr *);
+
+/*
+A C5 array is a value: it is assigned, passed, and returned as a whole.
+Like a C array, an expression of C5 array type is represented by a
+pointer to its first element, which is used for indexing and pointer
+arithmetic. This returns the array itself where its value is needed, or
+NULL if e is not a C5 array.
+*/
+struct expr *
+exprunarray(struct expr *e)
+{
+	if (e->decayed && e->base->type->kind == TYPEARRAY && e->base->type->u.array.byvalue)
+		return e->base;
+	return NULL;
+}
+
+/* a copy of an expression that refers to an object, which can be used independently of it */
+struct expr *
+exprdup(struct expr *e)
+{
+	struct expr *n;
+
+	n = xmalloc(sizeof(*n));
+	*n = *e;
+	n->next = NULL;
+	switch (e->kind) {
+	case EXPRIDENT:
+	case EXPRCONST:
+	case EXPRLAYOUT:
+	case EXPRSIZEPARAM:
+		break;
+	case EXPRUNARY:
+	case EXPRCAST:
+	case EXPRBITFIELD:
+		n->base = exprdup(e->base);
+		break;
+	case EXPRBINARY:
+		n->u.binary.l = exprdup(e->u.binary.l);
+		n->u.binary.r = exprdup(e->u.binary.r);
+		break;
+	default:
+		fatal("internal error: cannot copy expression");
+	}
+	return n;
+}
 
 /* 6.3.2.1 Conversion of arrays and function designators */
 static struct expr *
@@ -136,7 +182,7 @@ mkunaryexpr(enum tokenkind op, struct expr *base)
 		Allow struct and union types even if they are not lvalues,
 		since we take their address when compiling member access.
 		*/
-		if (!base->lvalue && base->type->kind != TYPEFUNC && base->type->kind != TYPESTRUCT && base->type->kind != TYPEUNION)
+		if (!base->lvalue && base->type->kind != TYPEFUNC && base->type->kind != TYPESTRUCT && base->type->kind != TYPEUNION && !(base->type->kind == TYPEARRAY && base->type->u.array.byvalue))
 			error(&tok.loc, "'&' operand is not an lvalue or function designator");
 		if (base->kind == EXPRBITFIELD)
 			error(&tok.loc, "cannot take address of bit-field");
@@ -146,7 +192,7 @@ mkunaryexpr(enum tokenkind op, struct expr *base)
 	case TMUL:
 		if (base->type->kind != TYPEPOINTER)
 			error(&tok.loc, "cannot dereference non-pointer");
-		if (base->kind == EXPRUNARY && base->op == TBAND && base->base->kind != EXPRSTRING) {
+		if (base->kind == EXPRUNARY && base->op == TBAND && base->base->kind != EXPRSTRING && (base->base->lvalue || base->base->type->kind != TYPEARRAY)) {
 			type = base->type->base;
 			expr = base->base;
 			expr->type = type;
@@ -218,13 +264,28 @@ exprassign(struct expr *e, struct type *t)
 		break;
 	case TYPESTRUCT:
 	case TYPEUNION:
-		if (!typecompatible(t, et))
-			error(&tok.loc, "assignment to %s type must be from compatible type", t->kind == TYPEUNION ? "union" : "struct");
+		if (typecompatible(t, et))
+			break;
+		/* a slice converts to a slice of the same elements with more qualifiers */
+		if (typeisslice(t) && typeisslice(et) && typecompatible(t->u.structunion.genargs[0].type, et->u.structunion.genargs[0].type) && qualsubset(et->u.structunion.genargs[0].qual, t->u.structunion.genargs[0].qual)) {
+			if (e->kind == EXPRCOMPOUND) {
+				e->type = t;
+				e->u.compound.decl->type = t;
+				return e;
+			}
+			return mkexpr(EXPRCAST, t, e);
+		}
+		error(&tok.loc, "assignment to %s type must be from compatible type", t->kind == TYPEUNION ? "union" : "struct");
 		break;
 	case TYPEPARAM:
 		if (t != et)
 			error(&tok.loc, "assignment to type parameter '%s' must be from the same type", t->u.param.name);
 		break;
+	case TYPEARRAY:
+		e = exprunarray(e);
+		if (!t->u.array.byvalue || !e || !typecompatible(t, e->type))
+			error(&tok.loc, "assignment to array type must be from compatible array type");
+		return e;
 	default:
 		assert(t->prop & PROPARITH);
 		if (!(et->prop & PROPARITH))
@@ -232,6 +293,31 @@ exprassign(struct expr *e, struct type *t)
 		break;
 	}
 	return exprconvert(e, t);
+}
+
+struct expr *
+exprconst(struct type *t, unsigned long long n)
+{
+	return mkconstexpr(t, n);
+}
+
+/* comparison of two scalar expressions, for matching patterns */
+struct expr *
+exprcompare(enum tokenkind op, struct expr *l, struct expr *r)
+{
+	return mkbinaryexpr(&tok.loc, op, l, r);
+}
+
+/* a temporary that holds a value once it is assigned */
+struct expr *
+exprtemp(struct type *t)
+{
+	struct expr *e;
+
+	e = mkexpr(EXPRTEMP, t, NULL);
+	e->lvalue = true;
+	e->u.temp = NULL;
+	return e;
 }
 
 struct expr *
@@ -274,7 +360,7 @@ mksizeofexpr(struct type *t) {
 
 	if (typedep(t)) {
 		e = mklayoutexpr(LAYOUTSIZE, t, NULL);
-	} else if (t->kind == TYPEARRAY && t->size == 0) {
+	} else if (t->kind == TYPEARRAY && t->size == 0 && t->prop & PROPVM) {
 		e = mkexpr(EXPRSIZEOF, &typeulong, NULL);
 		e->u.szof.type = t;
 	} else {
@@ -284,6 +370,8 @@ mksizeofexpr(struct type *t) {
 	return e;
 }
 
+static struct expr *slicedata(struct expr *);
+
 static struct expr *
 mkbinaryexpr(struct location *loc, enum tokenkind op, struct expr *l, struct expr *r)
 {
@@ -291,6 +379,10 @@ mkbinaryexpr(struct location *loc, enum tokenkind op, struct expr *l, struct exp
 	struct type *t = NULL;
 	enum typeprop lp, rp;
 
+	if (op == TADD || op == TSUB) {
+		l = slicedata(l);
+		r = slicedata(r);
+	}
 	lp = l->type->prop;
 	rp = r->type->prop;
 	switch (op) {
@@ -591,43 +683,59 @@ stringconcat(struct stringlit *str, bool forceutf8)
 		struct location loc;
 		char *str;
 	} *p;
-	int kind, newkind;
+	int kind, newkind, term, newterm;
 	struct type *t;
 	size_t (*encodechar)(void *, uint_least32_t, bool);
 	char *src;
 	unsigned char *buf, *dst;
 	uint_least32_t chr;
-	bool hexoct;
+	bool hexoct, c5;
 	size_t len, width;
 
 	assert(tok.kind == TSTRINGLIT);
 	parts.len = 0;
 	len = 0;
 	kind = 0;
+	term = 0;
+	c5 = c5file(tok.loc.file);
 	do {
 		src = tok.lit;
+		/* p: no null terminator (Pascal style), c: null terminator (C style) */
+		newterm = 0;
+		if (*src == 'p' || *src == 'c')
+			newterm = *src++;
 		switch (*src) {
+		case 'n': newkind = 'n', ++src; break;
 		case 'u': if (src[1] == '8') ++src; /* fallthrough */
 		case 'L':
 		case 'U': newkind = *src, ++src; break;
 		case '"': newkind = 0; break;
 		default: assert(0);
 		}
-		if (kind != newkind && kind && newkind)
+		if (kind != newkind && kind && newkind || term != newterm && term && newterm)
 			error(&tok.loc, "adjacent string literals have differing prefixes");
 		if (newkind)
 			kind = newkind;
+		if (newterm)
+			term = newterm;
 		p = arrayadd(&parts, sizeof(*p));
 		p->loc = tok.loc;
 		p->str = src + 1;
 		len += strlen(src) - 2;
 		next();
 	} while (tok.kind == TSTRINGLIT);
-	if (forceutf8)
+	if (forceutf8) {
 		kind = '8';
+		term = 'c';
+	}
+	/* in C5 files, strings are UTF-8 and have no null terminator by default */
+	if (!kind)
+		kind = c5 ? '8' : 'n';
+	if (!term)
+		term = c5 ? 'p' : 'c';
 	++len;  /* null byte */
 	switch (kind) {
-	case 0: t = &typechar; break;
+	case 'n': t = &typechar; break;
 	case '8': t = &typeuchar; break;
 	case 'u': t = &typeushort; break;
 	case 'U': t = &typeuint; break;
@@ -660,7 +768,8 @@ stringconcat(struct stringlit *str, bool forceutf8)
 			dst += encodechar(dst, chr, hexoct);
 		}
 	}
-	dst += encodechar(dst, 0, false);
+	if (term == 'c')
+		dst += encodechar(dst, 0, false);
 	str->size = (dst - buf) / width;
 	return t;
 }
@@ -722,6 +831,33 @@ static void genref(struct scope *, struct expr *);
 static struct expr *binaryexpr(struct scope *, struct expr *, int);
 static void genbind(struct expr *, struct genarg *);
 
+/*
+The type expected of the expression about to be parsed, which is used to
+infer type arguments if it is a call to a polymorphic function. It only
+applies to the expression that starts at the token it was set at.
+*/
+static struct type *expecttype;
+static struct location expectloc;
+
+void
+exprexpect(struct type *t)
+{
+	expecttype = t;
+	expectloc = tok.loc;
+}
+
+struct expr *
+exprident(struct decl *d)
+{
+	struct expr *e;
+
+	e = mkexpr(EXPRIDENT, d->type, NULL);
+	e->qual = d->qual;
+	e->lvalue = d->kind == DECLOBJECT;
+	e->u.ident.decl = d;
+	return e;
+}
+
 static struct expr *
 primaryexpr(struct scope *s)
 {
@@ -731,14 +867,26 @@ primaryexpr(struct scope *s)
 	char *src, *end;
 	uint_least32_t chr;
 	unsigned long long val;
-	bool hexoct, ordinary;
+	bool hexoct, ordinary, c5;
 	int base;
+	struct type *hint;
 
+	hint = NULL;
+	if (expecttype) {
+		if (tok.loc.file == expectloc.file && tok.loc.line == expectloc.line && tok.loc.col == expectloc.col)
+			hint = expecttype;
+		expecttype = NULL;
+	}
 	switch (tok.kind) {
 	case TSTRINGLIT:
+		c5 = c5file(tok.loc.file);
 		e = mkexpr(EXPRSTRING, NULL, NULL);
 		t = stringconcat(&e->u.string, false);
 		e->type = mkarraytype(t, QUALNONE, e->u.string.size);
+		/* a string without a null terminator may be empty */
+		e->type->incomplete = false;
+		/* in C5 files, string literals are C5 arrays */
+		e->type->u.array.byvalue = c5;
 		e->lvalue = true;
 		e = decay(e);
 		break;
@@ -820,6 +968,8 @@ primaryexpr(struct scope *s)
 		expect(TRPAREN, "after expression");
 		break;
 	case T_GENERIC:
+		if (c5file(tok.loc.file))
+			error(&tok.loc, "_Generic is not allowed in C5 files");
 		e = generic(s);
 		break;
 	default:
@@ -837,14 +987,21 @@ primaryexpr(struct scope *s)
 				next();
 				break;
 			}
-			e = mkexpr(EXPRIDENT, d->type, NULL);
-			e->qual = d->qual;
-			e->lvalue = d->kind == DECLOBJECT;
-			e->u.ident.decl = d;
-			e->u.ident.genargs = NULL;
+			if (d->kind == DECLALIAS) {
+				/* a name bound by a pattern refers to part of the destructured object */
+				e = exprdup(d->u.alias);
+				next();
+				break;
+			}
+			if (d->kind == DECLTYPE)
+				error(&tok.loc, "unexpected type name '%s' in expression", d->name);
+			e = exprident(d);
 			next();
-			if (d->gen)
+			if (d->gen) {
+				if (d->kind == DECLFUNC)
+					e->u.ident.expected = hint;
 				genref(s, e);
+			}
 			if (d->kind != DECLBUILTIN)
 				e = decay(e);
 			break;
@@ -930,111 +1087,591 @@ argscomplete(struct generic *g, struct genarg *args)
 	return true;
 }
 
-/*
-Infer the type arguments of a call to a polymorphic function from the
-arguments, and substitute them into the type of the callee r. The
-arguments are parsed into `args`.
-*/
-static void
-geninfer(struct scope *s, struct expr *r, struct expr **args)
+/* new types for the existential parameters of a struct value that is being destructured */
+struct genarg *
+exopen(struct generic *ex)
 {
-	struct decl *d, *p;
+	static unsigned id;
 	struct generic *g;
-	struct genarg *bind;
-	struct expr *a, **end;
-	struct type *t;
-	size_t i;
-
-	d = r->base->u.ident.decl;
-	g = d->gen;
-	bind = xreallocarray(NULL, g->nparam, sizeof(*bind));
-	if (r->base->u.ident.genargs)
-		memcpy(bind, r->base->u.ident.genargs, g->nparam * sizeof(*bind));
-	else
-		memset(bind, 0, g->nparam * sizeof(*bind));
-	end = args;
-	while (tok.kind != TRPAREN) {
-		if (end != args)
-			expect(TCOMMA, "or ')' after function call argument");
-		*end = assignexpr(s);
-		end = &(*end)->next;
-	}
-	*end = NULL;
-	t = r->type->base;
-	for (a = *args, p = t->u.func.params, i = 1; a && p; a = a->next, p = p->next, ++i) {
-		if (!genunify(g, bind, p->type, p->qual, a->type, QUALNONE))
-			error(&tok.loc, "cannot infer type arguments of '%s' from argument %zu", d->name, i);
-	}
-	for (i = 0; i < g->nparam; ++i) {
-		if (!bind[i].type && !bind[i].size && !bind[i].constset)
-			error(&tok.loc, "cannot infer %s parameter '%s' of '%s'", g->params[i].kind == GENSIZE ? "size" : g->params[i].kind == GENCONSTNESS ? "constness" : "type", g->params[i].name, d->name);
-	}
-	genbind(r->base, bind);
-	r->type = mkpointertype(r->base->type, QUALNONE);
-}
-
-struct exvalue {
-	struct decl *decl;
-	struct generic *exists;
 	struct genarg *args;
-	struct exvalue *next;
-};
+	char *name;
+	size_t i, len;
 
-/*
-The arguments for the existential parameters of a struct value whose
-member is accessed through the pointer r (with operator op). Each value
-has its own types for them, which are only compatible with themselves.
-The value must not change while it is used, so it must be a const object
-named by an identifier, or reached through a const pointer to const.
-*/
-static struct genarg *
-exopen(struct expr *r, enum tokenkind op, struct type *t, char *member)
-{
-	static struct exvalue *values;
-	struct exvalue *v;
-	struct generic *ex, *g;
-	struct expr *base;
-	struct decl *d;
-	struct array name;
-	size_t i;
-
-	ex = t->u.structunion.exists;
-	d = NULL;
-	if (op == TPERIOD) {
-		base = r->base;
-		if (base->kind == EXPRIDENT && r->type->qual & QUALCONST)
-			d = base->u.ident.decl;
-	} else if (r->kind == EXPRIDENT && r->qual & QUALCONST && r->type->qual & QUALCONST) {
-		d = r->u.ident.decl;
-	}
-	if (!d)
-		error(&tok.loc, "member '%s' has an existential type, so the struct must be a const object or accessed through a const pointer to const", member);
-	for (v = values; v; v = v->next) {
-		if (v->decl == d && v->exists == ex)
-			return v->args;
-	}
-	/* new types, named after the parameter and the value, which are never substituted */
+	/* the types are only compatible with themselves, and are never substituted */
 	g = mkgeneric(false);
 	g->nparam = ex->nparam;
 	g->params = xreallocarray(NULL, ex->nparam, sizeof(g->params[0]));
-	v = xmalloc(sizeof(*v));
-	v->decl = d;
-	v->exists = ex;
-	v->args = xreallocarray(NULL, ex->nparam, sizeof(v->args[0]));
+	args = xreallocarray(NULL, ex->nparam, sizeof(args[0]));
+	++id;
 	for (i = 0; i < ex->nparam; ++i) {
-		name = (struct array){0};
-		arrayaddbuf(&name, ex->params[i].name, strlen(ex->params[i].name));
-		arrayaddbuf(&name, " of ", 4);
-		arrayaddbuf(&name, d->name, strlen(d->name) + 1);
+		len = strlen(ex->params[i].name) + 16;
+		name = xmalloc(len);
+		snprintf(name, len, "%s#%u", ex->params[i].name, id);
 		g->params[i] = ex->params[i];
-		g->params[i].name = name.val;
-		g->params[i].type = mkparamtype(g, i, name.val);
-		memset(&v->args[i], 0, sizeof(v->args[i]));
-		v->args[i].type = g->params[i].type;
+		g->params[i].name = name;
+		g->params[i].type = mkparamtype(g, i, name);
+		memset(&args[i], 0, sizeof(args[i]));
+		args[i].type = g->params[i].type;
 	}
-	v->next = values;
-	values = v;
-	return v->args;
+	return args;
+}
+
+/*
+The member m, at `offset`, of the struct or union of type t that r
+points to. For a member that mentions existential parameters of t,
+`exargs` are the types that stand for them.
+*/
+static struct expr *
+mkmemberexpr(struct expr *r, struct type *t, struct member *m, unsigned long long offset, bool lvalue, struct genarg *exargs)
+{
+	struct expr *e;
+	struct type *mt;
+	enum typequal mq;
+
+	mt = m->type;
+	mq = r->type->qual | m->qual;
+	if (exargs && typehasparam(mt, t->u.structunion.exists))
+		mt = typesubst(mt, &mq, t->u.structunion.exists, exargs);
+	if (typedep(t) && !m->name)
+		error(&tok.loc, "unnamed member of a struct depending on mono parameters cannot be accessed");
+	r = mkbinaryexpr(&tok.loc, TADD, exprconvert(r, &typeulong), typedep(t) ? mklayoutexpr(LAYOUTOFFSET, t, m->name) : mkconstexpr(&typeulong, offset));
+	r->type = mkpointertype(mt, mq);
+	r = mkunaryexpr(TMUL, r);
+	r->lvalue = lvalue;
+	if (m->bits.before || m->bits.after) {
+		e = mkexpr(EXPRBITFIELD, r->type, r);
+		e->lvalue = lvalue;
+		e->u.bitfield.bits = m->bits;
+		if (typedep(t)) {
+			e->u.bitfield.type = t;
+			e->u.bitfield.member = m->name;
+		}
+		return e;
+	}
+	return r;
+}
+
+/* the member m of the struct or union object `obj` */
+struct expr *
+exprmember(struct expr *obj, struct type *t, struct member *m, unsigned long long offset, struct genarg *exargs)
+{
+	bool lvalue;
+
+	lvalue = obj->lvalue;
+	return mkmemberexpr(mkunaryexpr(TBAND, obj), t, m, offset, lvalue, exargs);
+}
+
+/* the data pointer of a slice, or e itself if it is not a slice */
+static struct expr *
+slicedata(struct expr *e)
+{
+	if (!typeisslice(e->type))
+		return e;
+	return exprmember(e, e->type, e->type->u.structunion.members, 0, NULL);
+}
+
+static struct expr *
+mkcommaexpr(struct expr *first, struct expr *last)
+{
+	struct expr *e, **end;
+
+	if (!first)
+		return last;
+	for (end = &first; *end; end = &(*end)->next)
+		;
+	*end = last;
+	e = mkexpr(EXPRCOMMA, last->type, first);
+	return e;
+}
+
+static struct expr *mkassignexpr(struct expr *, struct expr *);
+
+/*
+The slice r[lo ... hi] of a pointer, array, or slice. The bounds are
+inclusive, and may be omitted: the lower bound defaults to 0, and the
+upper bound to the last element of an array or slice.
+*/
+static struct expr *
+mkslice(struct scope *s, struct expr *r, struct expr *lo, struct expr *hi)
+{
+	struct expr *e, *pre, **preend, *tmp, *data, *len, *lo2;
+	struct type *t, *at;
+	struct member *m;
+	struct decl *d;
+	struct init *init;
+
+	pre = NULL;
+	preend = &pre;
+	lo2 = NULL;
+	if (lo) {
+		if (!(lo->type->prop & PROPINT))
+			error(&tok.loc, "slice bound is not an integer type");
+		lo = eval(exprconvert(lo, &typeulong));
+		if (lo->kind == EXPRCONST) {
+			lo2 = mkconstexpr(&typeulong, lo->u.constant.u);
+		} else {
+			/* the lower bound is used for both the pointer and the length */
+			tmp = exprtemp(&typeulong);
+			*preend = mkassignexpr(tmp, lo);
+			preend = &(*preend)->next;
+			lo = lo2 = tmp;
+		}
+	}
+	if (hi) {
+		if (!(hi->type->prop & PROPINT))
+			error(&tok.loc, "slice bound is not an integer type");
+		hi = exprconvert(hi, &typeulong);
+		len = mkbinaryexpr(&tok.loc, TADD, hi, mkconstexpr(&typeulong, 1));
+	} else {
+		len = NULL;
+	}
+	if (typeisslice(r->type)) {
+		t = r->type;
+		m = t->u.structunion.members;
+		if (len) {
+			data = slicedata(r);
+		} else {
+			tmp = exprtemp(mkpointertype(t, r->qual));
+			*preend = mkassignexpr(tmp, mkunaryexpr(TBAND, r));
+			preend = &(*preend)->next;
+			data = mkmemberexpr(tmp, t, m, 0, false, NULL);
+			len = mkmemberexpr(tmp, t, m->next, m->next->offset, false, NULL);
+		}
+	} else {
+		if (r->type->kind != TYPEPOINTER)
+			error(&tok.loc, "sliced expression must be a pointer, array, or slice");
+		if (r->type->base->incomplete || r->type->base->kind == TYPEFUNC)
+			error(&tok.loc, "sliced pointer must be to a complete object type");
+		if (!len) {
+			at = r->decayed && r->base->type->kind == TYPEARRAY ? r->base->type : NULL;
+			if (!at)
+				error(&tok.loc, "slice of a pointer requires an upper bound");
+			if (at->prop & PROPDEPLEN && !at->incomplete)
+				len = exprdup(at->u.array.length);
+			else if (at->u.array.length && at->u.array.length->kind == EXPRCONST)
+				len = mkconstexpr(&typeulong, at->u.array.length->u.constant.u);
+			else if (!at->incomplete && !(at->prop & (PROPVM|PROPDEPLEN)) && at->base->size)
+				len = mkconstexpr(&typeulong, at->size / at->base->size);
+			else
+				error(&tok.loc, "slice of an array of unknown length requires an upper bound");
+		}
+		t = mkslicetype(r->type->base, r->type->qual);
+		m = t->u.structunion.members;
+		data = r;
+	}
+	if (lo) {
+		data = mkbinaryexpr(&tok.loc, TADD, data, lo);
+		len = mkbinaryexpr(&tok.loc, TSUB, len, lo2);
+	}
+	e = mkexpr(EXPRCOMPOUND, t, NULL);
+	e->lvalue = true;
+	d = mkdecl(NULL, DECLOBJECT, t, QUALNONE, LINKNONE);
+	d->u.obj.storage = s == &filescope ? SDSTATIC : SDAUTO;
+	init = mkinit(0, 8, (struct bitfield){0}, exprassign(data, m->type));
+	init->next = mkinit(8, 16, (struct bitfield){0}, len);
+	e->u.compound.decl = d;
+	e->u.compound.init = init;
+	return mkcommaexpr(pre, e);
+}
+
+/* an object initialized with the value of e, which lives until the end of the enclosing block */
+static struct expr *
+mktempobj(struct scope *s, struct expr *val)
+{
+	struct expr *e, *arr;
+	struct decl *d;
+	struct type *t;
+
+	arr = exprunarray(val);
+	if (arr)
+		val = arr;
+	t = val->type;
+	e = mkexpr(EXPRCOMPOUND, t, NULL);
+	e->lvalue = true;
+	d = mkdecl(NULL, DECLOBJECT, t, QUALNONE, LINKNONE);
+	d->u.obj.storage = s == &filescope ? SDSTATIC : SDAUTO;
+	e->u.compound.decl = d;
+	e->u.compound.init = mkinit(0, t->size, (struct bitfield){0}, val);
+	return e;
+}
+
+struct callarg {
+	/* parameter name, or NULL for a positional argument */
+	char *name;
+	struct expr *expr;
+};
+
+static struct expr *mkcall(struct scope *, struct expr *, struct callarg *, size_t, struct type *);
+
+/* a given that can be used for an implicit parameter */
+struct givencand {
+	struct decl *decl;
+	/* whether the parameter is a pointer to the given */
+	bool byaddr;
+	/* arguments for the parameters of a forall given */
+	struct genarg *args;
+	/* arguments of the function being called, including those determined by this given */
+	struct genarg *bind;
+};
+
+/* the type that a given provides: its own, or its result for a given function */
+static struct type *
+giventype(struct decl *d, enum typequal *q)
+{
+	if (d->kind == DECLFUNC) {
+		*q = QUALNONE;
+		return d->type->base;
+	}
+	*q = d->qual;
+	return d->type;
+}
+
+/* whether t refers to a type parameter of g that has no argument in `bind` */
+static bool
+hasunbound(struct type *t, struct generic *g, struct genarg *bind)
+{
+	size_t i;
+
+	for (i = 0; i < g->nparam; ++i) {
+		if (g->params[i].kind == GENTYPE && !bind[i].type && typeoccurs(t, g->params[i].type))
+			return true;
+	}
+	return false;
+}
+
+/*
+Whether the given d can be used for an implicit parameter of type pt.
+The parameter may refer to the parameters of the function being called,
+g, which are bound in `bind` where they are known; matching the given may
+determine more of them.
+*/
+static bool
+matchgiven(struct decl *d, struct generic *g, struct genarg *bind, struct type *pt, struct givencand *c)
+{
+	struct unifier u;
+	struct genarg *ident, *args;
+	struct generic *fresh;
+	struct type *ht;
+	enum typequal hq, q;
+	size_t i;
+	int pass;
+
+	ht = giventype(d, &hq);
+	fresh = NULL;
+	ident = NULL;
+	if (d->gen) {
+		/* the parameters of the given are renamed, since pt may refer to them as well */
+		fresh = genfresh(d->gen, &ident);
+		q = QUALNONE;
+		ht = typesubst(ht, &q, d->gen, ident);
+	}
+	for (pass = 0;; ++pass) {
+		if (pass == 2)
+			return false;
+		/* a pointer parameter can also take the address of a given */
+		if (pass == 1 && pt->kind != TYPEPOINTER)
+			return false;
+		u.g[0] = g;
+		u.bind[0] = NULL;
+		if (g) {
+			u.bind[0] = xreallocarray(NULL, g->nparam, sizeof(*bind));
+			memcpy(u.bind[0], bind, g->nparam * sizeof(*bind));
+		}
+		u.g[1] = fresh;
+		u.bind[1] = NULL;
+		if (fresh) {
+			u.bind[1] = xreallocarray(NULL, fresh->nparam, sizeof(*bind));
+			memset(u.bind[1], 0, fresh->nparam * sizeof(*bind));
+		}
+		if (pass == 0 ? unify(&u, pt, QUALNONE, ht, QUALNONE) : unify(&u, pt->base, pt->qual, ht, hq | pt->qual))
+			break;
+	}
+	c->decl = d;
+	c->byaddr = pass == 1;
+	c->args = NULL;
+	if (fresh) {
+		/* the type of the given must determine all of its parameters */
+		args = xreallocarray(NULL, fresh->nparam, sizeof(*args));
+		memset(args, 0, fresh->nparam * sizeof(*args));
+		for (i = 0; i < fresh->nparam; ++i) {
+			switch (fresh->params[i].kind) {
+			case GENTYPE:
+				if (!u.bind[1][i].type)
+					return false;
+				args[i].qual = u.bind[1][i].qual;
+				args[i].type = unifyresolve(&u, u.bind[1][i].type, &args[i].qual);
+				if (typehasparam(args[i].type, fresh) || g && hasunbound(args[i].type, g, u.bind[0]))
+					return false;
+				break;
+			case GENSIZE:
+				if (!u.bind[1][i].size)
+					return false;
+				args[i].size = unifyresolvesize(&u, u.bind[1][i].size);
+				if (exprhasparam(args[i].size, fresh))
+					return false;
+				break;
+			case GENCONSTNESS:
+				args[i].constset = true;
+				break;
+			}
+		}
+		c->args = args;
+	}
+	if (g) {
+		for (i = 0; i < g->nparam; ++i) {
+			if (g->params[i].kind == GENTYPE && u.bind[0][i].type && u.bind[0][i].type != g->params[i].type) {
+				u.bind[0][i].type = unifyresolve(&u, u.bind[0][i].type, &u.bind[0][i].qual);
+				if (fresh && typehasparam(u.bind[0][i].type, fresh))
+					return false;
+			} else if (g->params[i].kind == GENSIZE && u.bind[0][i].size) {
+				u.bind[0][i].size = unifyresolvesize(&u, u.bind[0][i].size);
+			}
+		}
+	}
+	c->bind = u.bind[0];
+	return true;
+}
+
+/* whether the type of the given p can be made the type of the given d by substituting the parameters of p */
+static bool
+givengeneralizes(struct decl *p, struct decl *d)
+{
+	struct unifier u;
+	struct genarg *ident;
+	struct type *pt, *dt;
+	enum typequal q;
+
+	pt = giventype(p, &q);
+	dt = giventype(d, &q);
+	if (!p->gen)
+		return typecompatible(pt, dt);
+	u.g[0] = genfresh(p->gen, &ident);
+	u.bind[0] = xreallocarray(NULL, p->gen->nparam, sizeof(*ident));
+	memset(u.bind[0], 0, p->gen->nparam * sizeof(*ident));
+	u.g[1] = NULL;
+	u.bind[1] = NULL;
+	q = QUALNONE;
+	pt = typesubst(pt, &q, p->gen, ident);
+	return unify(&u, pt, QUALNONE, dt, QUALNONE);
+}
+
+/* the types that are being resolved from given functions, to detect premises that never terminate */
+static struct type *goals[32];
+static size_t ngoals;
+
+/*
+Find the given for an implicit parameter of type pt: the one in the
+innermost scope that has any, and the most specific one in that scope.
+Returns the argument for the parameter.
+*/
+static struct expr *
+resolvegiven(struct scope *s, struct generic *g, struct genarg *bind, struct type *pt, const char *func, const char *param)
+{
+	struct scope *sc;
+	struct decl *d;
+	struct array cands = {0};
+	struct givencand *c, *other, *best;
+	struct expr *e;
+	struct type *t;
+	size_t i;
+
+	if (!param)
+		param = "<unnamed>";
+	for (sc = s; sc; sc = sc->parent) {
+		for (d = sc->givens; d; d = d->nextgiven) {
+			c = arrayadd(&cands, sizeof(*c));
+			if (!matchgiven(d, g, bind, pt, c))
+				cands.len -= sizeof(*c);
+		}
+		if (cands.len)
+			break;
+	}
+	if (!cands.len)
+		error(&tok.loc, "no given found for implicit parameter '%s' of '%s'", param, func);
+	best = NULL;
+	arrayforeach(&cands, c) {
+		arrayforeach(&cands, other) {
+			if (other != c && !(givengeneralizes(other->decl, c->decl) && !givengeneralizes(c->decl, other->decl)))
+				break;
+		}
+		if (other == (void *)((char *)cands.val + cands.len)) {
+			best = c;
+			break;
+		}
+	}
+	if (!best) {
+		c = cands.val;
+		error(&tok.loc, "ambiguous givens for implicit parameter '%s' of '%s': '%s' and '%s'", param, func, c[0].decl->name, c[1].decl->name);
+	}
+	c = best;
+	if (g)
+		memcpy(bind, c->bind, g->nparam * sizeof(*bind));
+	d = c->decl;
+	e = exprident(d);
+	if (d->gen)
+		genbind(e, c->args);
+	if (d->kind != DECLFUNC) {
+		e = c->byaddr ? mkunaryexpr(TBAND, e) : decay(e);
+		free(cands.val);
+		return e;
+	}
+	/* a given function is called, which resolves its premises in turn */
+	t = e->type->base;
+	for (i = 0; i < ngoals; ++i) {
+		if (typecompatible(goals[i], t))
+			error(&tok.loc, "resolving implicit parameter '%s' of '%s' with given function '%s' does not terminate", param, func, d->name);
+	}
+	if (ngoals == countof(goals))
+		error(&tok.loc, "resolving implicit parameter '%s' of '%s' requires too many given functions", param, func);
+	goals[ngoals++] = t;
+	e = mkcall(s, decay(e), NULL, 0, NULL);
+	--ngoals;
+	if (c->byaddr)
+		e = mkunaryexpr(TBAND, mktempobj(s, e));
+	free(cands.val);
+	return e;
+}
+
+/*
+Call the function r. Positional arguments fill the parameters that are
+not implicit, in order, and named arguments fill the parameters they
+name. The type arguments of a polymorphic function that were not given
+are inferred from the arguments, then from the type expected of the
+result (if any), then from the givens for its implicit parameters.
+Implicit parameters that were not passed by name are resolved from the
+givens in scope.
+*/
+static struct expr *
+mkcall(struct scope *s, struct expr *r, struct callarg *args, size_t nargs, struct type *expected)
+{
+	struct decl *fd, *p, **params;
+	struct generic *g;
+	struct genarg *bind, *try;
+	struct expr *e, **slots, **end, *a, *extra, **extraend;
+	struct type *t, *at;
+	size_t i, pi, nparam, *argparam;
+
+	if (r->type->kind != TYPEPOINTER || r->type->base->kind != TYPEFUNC)
+		error(&tok.loc, "called object is not a function");
+	/* implicit parameters only apply when the function is called by name */
+	fd = NULL;
+	if (r->decayed && r->base->kind == EXPRIDENT && r->base->u.ident.decl->kind == DECLFUNC)
+		fd = r->base->u.ident.decl;
+	g = NULL;
+	bind = NULL;
+	if (fd && fd->gen && !argscomplete(fd->gen, r->base->u.ident.genargs)) {
+		g = fd->gen;
+		bind = xreallocarray(NULL, g->nparam, sizeof(*bind));
+		if (r->base->u.ident.genargs)
+			memcpy(bind, r->base->u.ident.genargs, g->nparam * sizeof(*bind));
+		else
+			memset(bind, 0, g->nparam * sizeof(*bind));
+	}
+	t = r->type->base;
+	nparam = t->u.func.nparam;
+	params = xreallocarray(NULL, nparam + 1, sizeof(*params));
+	slots = xreallocarray(NULL, nparam + 1, sizeof(*slots));
+	argparam = xreallocarray(NULL, nargs + 1, sizeof(*argparam));
+	for (p = t->u.func.params, pi = 0; p; p = p->next, ++pi) {
+		params[pi] = p;
+		slots[pi] = NULL;
+	}
+	extra = NULL;
+	extraend = &extra;
+	pi = 0;
+	for (i = 0; i < nargs && !args[i].name; ++i) {
+		while (fd && pi < nparam && params[pi]->implicit)
+			++pi;
+		if (pi == nparam) {
+			if (!t->u.func.isvararg)
+				error(&tok.loc, "too many arguments for function call");
+			argparam[i] = -1;
+			*extraend = args[i].expr;
+			extraend = &args[i].expr->next;
+			continue;
+		}
+		argparam[i] = pi;
+		slots[pi++] = args[i].expr;
+	}
+	for (; i < nargs; ++i) {
+		for (pi = 0; pi < nparam; ++pi) {
+			if (params[pi]->name && strcmp(params[pi]->name, args[i].name) == 0)
+				break;
+		}
+		if (pi == nparam)
+			error(&tok.loc, "function has no parameter named '%s'", args[i].name);
+		if (slots[pi])
+			error(&tok.loc, "parameter '%s' is given more than one argument", args[i].name);
+		argparam[i] = pi;
+		slots[pi] = args[i].expr;
+	}
+	*extraend = NULL;
+	if (g) {
+		/* infer from the arguments, in the order they are written */
+		for (i = 0; i < nargs; ++i) {
+			if (argparam[i] == -1)
+				continue;
+			p = params[argparam[i]];
+			a = args[i].expr;
+			at = a->type;
+			if (p->type->kind == TYPEARRAY && exprunarray(a))
+				at = a->base->type;
+			if (!genunify(g, bind, p->type, p->qual, at, QUALNONE))
+				error(&tok.loc, "cannot infer type arguments of '%s' from argument %zu", fd->name, i + 1);
+		}
+		/* then from the type expected of the result, where that determines more */
+		if (expected) {
+			try = xreallocarray(NULL, g->nparam, sizeof(*try));
+			memcpy(try, bind, g->nparam * sizeof(*try));
+			if (genunify(g, try, t->base, QUALNONE, expected, QUALNONE))
+				memcpy(bind, try, g->nparam * sizeof(*try));
+			free(try);
+		}
+		/* then from the givens for the implicit parameters */
+		for (pi = 0; pi < nparam; ++pi) {
+			if (!slots[pi] && params[pi]->implicit)
+				slots[pi] = resolvegiven(s, g, bind, params[pi]->type, fd->name, params[pi]->name);
+		}
+		for (i = 0; i < g->nparam; ++i) {
+			if (!bind[i].type && !bind[i].size && !bind[i].constset)
+				error(&tok.loc, "cannot infer %s parameter '%s' of '%s'", g->params[i].kind == GENSIZE ? "size" : g->params[i].kind == GENCONSTNESS ? "constness" : "type", g->params[i].name, fd->name);
+		}
+		genbind(r->base, bind);
+		r->type = mkpointertype(r->base->type, QUALNONE);
+		t = r->type->base;
+		for (p = t->u.func.params, pi = 0; p; p = p->next, ++pi)
+			params[pi] = p;
+	} else if (fd) {
+		for (pi = 0; pi < nparam; ++pi) {
+			if (!slots[pi] && params[pi]->implicit)
+				slots[pi] = resolvegiven(s, NULL, NULL, params[pi]->type, fd->name, params[pi]->name);
+		}
+	}
+	e = mkexpr(EXPRCALL, t->base, r);
+	e->u.call.args = NULL;
+	e->u.call.nargs = 0;
+	end = &e->u.call.args;
+	for (pi = 0; pi < nparam; ++pi) {
+		if (!slots[pi])
+			error(&tok.loc, "not enough arguments for function call");
+		a = exprassign(slots[pi], params[pi]->type);
+		*end = a;
+		end = &a->next;
+		++e->u.call.nargs;
+	}
+	while (extra) {
+		a = extra;
+		extra = extra->next;
+		a = exprpromote(a);
+		*end = a;
+		end = &a->next;
+		++e->u.call.nargs;
+	}
+	*end = NULL;
+	free(params);
+	free(slots);
+	free(argparam);
+	return decay(e);
 }
 
 /* TODO: merge with init.c:designator() */
@@ -1197,24 +1834,35 @@ mkincdecexpr(enum tokenkind op, struct expr *base, bool post)
 static struct expr *
 postfixexpr(struct scope *s, struct expr *r)
 {
-	struct expr *e, *arr, *idx, *tmp, **end, *args;
-	struct type *t, *mt;
-	struct decl *p;
+	struct expr *e, *arr, *idx, *tmp;
+	struct type *t, *expected;
 	struct member *m;
-	enum typequal mq;
 	unsigned long long offset;
-	enum typequal tq;
 	enum tokenkind op;
-	bool lvalue;
+	bool lvalue, named;
+	struct array args;
+	struct callarg *arg;
 
 	if (!r)
 		r = primaryexpr(s);
 	for (;;) {
 		switch (tok.kind) {
-		case TLBRACK:  /* subscript */
+		case TLBRACK:  /* subscript or slice */
 			next();
 			arr = r;
+			if (consume(TELLIPSIS)) {
+				e = mkslice(s, arr, NULL, tok.kind == TRBRACK ? NULL : expr(s));
+				expect(TRBRACK, "after slice");
+				break;
+			}
 			idx = expr(s);
+			if (consume(TELLIPSIS)) {
+				e = mkslice(s, arr, idx, tok.kind == TRBRACK ? NULL : expr(s));
+				expect(TRBRACK, "after slice");
+				break;
+			}
+			arr = slicedata(arr);
+			idx = slicedata(idx);
 			if (arr->type->kind != TYPEPOINTER) {
 				if (idx->type->kind != TYPEPOINTER)
 					error(&tok.loc, "either array or index must be pointer type");
@@ -1238,39 +1886,38 @@ postfixexpr(struct scope *s, struct expr *r)
 			}
 			if (r->type->kind != TYPEPOINTER || r->type->base->kind != TYPEFUNC)
 				error(&tok.loc, "called object is not a function");
-			args = NULL;
-			if (r->decayed && r->base->kind == EXPRIDENT && r->base->u.ident.decl->gen && !argscomplete(r->base->u.ident.decl->gen, r->base->u.ident.genargs))
-				geninfer(s, r, &args);
-			t = r->type->base;
-			e = mkexpr(EXPRCALL, t->base, r);
-			e->u.call.args = NULL;
-			e->u.call.nargs = 0;
-			p = t->u.func.params;
-			end = &e->u.call.args;
-			while (args ? args != NULL : tok.kind != TRPAREN) {
-				if (!args && e->u.call.args)
+			expected = NULL;
+			if (r->decayed && r->base->kind == EXPRIDENT)
+				expected = r->base->u.ident.expected;
+			args = (struct array){0};
+			named = false;
+			while (tok.kind != TRPAREN) {
+				if (args.len)
 					expect(TCOMMA, "or ')' after function call argument");
-				if (!p && !t->u.func.isvararg)
-					error(&tok.loc, "too many arguments for function call");
-				if (args) {
-					*end = args;
-					args = args->next;
-				} else {
-					*end = assignexpr(s);
+				arg = arrayadd(&args, sizeof(*arg));
+				arg->name = NULL;
+				if (consume(TPERIOD)) {
+					arg->name = expect(TIDENT, "for argument name");
+					expect(TASSIGN, "after argument name");
+					named = true;
+				} else if (named) {
+					error(&tok.loc, "positional argument after named argument");
 				}
-				if (t->u.func.isvararg && !p)
-					*end = exprpromote(*end);
-				else
-					*end = exprassign(*end, p->type);
-				end = &(*end)->next;
-				++e->u.call.nargs;
-				if (p)
-					p = p->next;
+				arg->expr = assignexpr(s);
 			}
-			if (p && !t->u.func.isvararg)
-				error(&tok.loc, "not enough arguments for function call");
-			e = decay(e);
 			next();
+			/* the type expected of the expression only applies if the call is all of it */
+			switch (tok.kind) {
+			case TSEMICOLON:
+			case TCOMMA:
+			case TRPAREN:
+			case TRBRACE:
+				break;
+			default:
+				expected = NULL;
+			}
+			e = mkcall(s, r, args.val, args.len / sizeof(*arg), expected);
+			free(args.val);
 			break;
 		case TPERIOD:
 			r = mkunaryexpr(TBAND, r);
@@ -1280,7 +1927,6 @@ postfixexpr(struct scope *s, struct expr *r)
 			if (r->type->kind != TYPEPOINTER)
 				error(&tok.loc, "'%s' operator must be applied to pointer to struct/union", tokenstr(op));
 			t = r->type->base;
-			tq = r->type->qual;
 			if (t->kind != TYPESTRUCT && t->kind != TYPEUNION)
 				error(&tok.loc, "'%s' operator must be applied to pointer to struct/union", tokenstr(op));
 			if (t->incomplete)
@@ -1293,25 +1939,10 @@ postfixexpr(struct scope *s, struct expr *r)
 			m = typemember(t, tokenstr(tok.kind), &offset);
 			if (!m)
 				error(&tok.loc, "struct/union has no member named '%s'", tok.lit);
-			mt = m->type;
-			mq = tq | m->qual;
-			if (t->u.structunion.exists && typehasparam(mt, t->u.structunion.exists))
-				mt = typesubst(mt, &mq, t->u.structunion.exists, exopen(r, op, t, m->name));
-			r = mkbinaryexpr(&tok.loc, TADD, exprconvert(r, &typeulong), typedep(t) ? mklayoutexpr(LAYOUTOFFSET, t, m->name) : mkconstexpr(&typeulong, offset));
-			r->type = mkpointertype(mt, mq);
-			r = mkunaryexpr(TMUL, r);
-			r->lvalue = lvalue;
-			if (m->bits.before || m->bits.after) {
-				e = mkexpr(EXPRBITFIELD, r->type, r);
-				e->lvalue = lvalue;
-				e->u.bitfield.bits = m->bits;
-				if (typedep(t)) {
-					e->u.bitfield.type = t;
-					e->u.bitfield.member = m->name;
-				}
-			} else {
-				e = r;
-			}
+			/* each value has its own types for existential parameters, which are only named by destructuring it */
+			if (t->u.structunion.exists && typehasparam(m->type, t->u.structunion.exists))
+				error(&tok.loc, "member '%s' has an existential type, so it can only be accessed by destructuring", m->name);
+			e = mkmemberexpr(r, t, m, offset, lvalue, NULL);
 			next();
 			break;
 		case TINC:
@@ -1334,6 +1965,7 @@ unaryexpr(struct scope *s)
 	enum tokenkind op;
 	struct expr *e, *l;
 	struct type *t;
+	bool c5;
 
 	op = tok.kind;
 	switch (op) {
@@ -1383,6 +2015,8 @@ unaryexpr(struct scope *s)
 	case TSIZEOF:
 	case TALIGNOF:
 	case T__ALIGNOF__:
+		/* in C5 files, sizeof requires parentheses */
+		c5 = c5file(tok.loc.file);
 		next();
 		if (consume(TLPAREN)) {
 			t = typename(s, NULL, NULL);
@@ -1398,11 +2032,11 @@ unaryexpr(struct scope *s)
 				if (op == TSIZEOF)
 					e = postfixexpr(s, e);
 			}
-		} else if (op == TSIZEOF) {
+		} else if (op == TSIZEOF && !c5) {
 			t = NULL;
 			e = unaryexpr(s);
 		} else {
-			error(&tok.loc, "expected ')' after 'alignof'");
+			error(&tok.loc, "expected '(' after '%s'", tokenstr(op));
 		}
 		if (!t) {
 			if (e->decayed)
@@ -1417,7 +2051,7 @@ unaryexpr(struct scope *s)
 			error(&tok.loc, "%s operator applied to function type", tokenstr(op));
 		if (typedep(t)) {
 			e = mklayoutexpr(op == TSIZEOF ? LAYOUTSIZE : LAYOUTALIGN, t, NULL);
-		} else if (t->kind == TYPEARRAY && t->size == 0 && op == TSIZEOF) {
+		} else if (t->kind == TYPEARRAY && t->size == 0 && t->prop & PROPVM && op == TSIZEOF) {
 			e = mkexpr(EXPRSIZEOF, &typeulong, e);
 			e->u.szof.type = t;
 		} else {
@@ -1586,6 +2220,22 @@ condexpr(struct scope *s)
 	return e;
 }
 
+/* an unnamed object of type t with the initializer list that follows */
+struct expr *
+exprcompound(struct scope *s, struct type *t)
+{
+	struct expr *e;
+	struct decl *d;
+
+	e = mkexpr(EXPRCOMPOUND, t, NULL);
+	e->lvalue = true;
+	d = mkdecl(NULL, DECLOBJECT, t, QUALNONE, LINKNONE);
+	d->u.obj.storage = SDAUTO;
+	e->u.compound.decl = d;
+	e->u.compound.init = parseinit(s, t);
+	return decay(e);
+}
+
 /* whether size parameters of erased declarations may be used, as in array lengths */
 bool allowerasedsize;
 
@@ -1726,7 +2376,7 @@ mkassignexpr(struct expr *l, struct expr *r)
 struct expr *
 assignexpr(struct scope *s)
 {
-	struct expr *e, *l, *r, *tmp, *bit;
+	struct expr *e, *l, *r, *tmp, *bit, *arr;
 	enum tokenkind op;
 
 	l = condexpr(s);
@@ -1747,14 +2397,25 @@ assignexpr(struct scope *s)
 	default:
 		return l;
 	}
+	/* a C5 array is assigned as a whole */
+	arr = exprunarray(l);
+	if (arr) {
+		if (op)
+			error(&tok.loc, "invalid compound assignment to array");
+		l = arr;
+	}
 	if (l->qual & QUALCONSTANT)
 		error(&tok.loc, "assignment to const qualified object");
 	if (!l->lvalue)
 		error(&tok.loc, "left side of assignment expression is not an lvalue");
 	next();
-	r = assignexpr(s);
 	if (!op)
-		return mkassignexpr(l, r);
+		exprexpect(l->type);
+	r = assignexpr(s);
+	if (!op) {
+		e = mkassignexpr(l, r);
+		return arr ? decay(e) : e;
+	}
 	/* rewrite `E1 OP= E2` as `T = &E1, *T = *T OP E2`, where T is a temporary slot */
 	if (l->kind == EXPRBITFIELD) {
 		bit = l;

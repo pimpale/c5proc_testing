@@ -1,0 +1,61 @@
+int printf(const char *, ...);
+struct Point { int x; int y; };
+Point get_point(int a) { return {a, a * 10}; }
+typedef enum { RESULT_OK, RESULT_ERR } ResultKind;
+struct Res { ResultKind kind; union { const char *data; int err; }; };
+Res readf(int ok) { if (ok) return {.kind = RESULT_OK, .data = cn"contents"}; return {.kind = RESULT_ERR, .err = 404}; }
+struct Bits { unsigned a : 3; unsigned b : 5; struct Point p; };
+
+exists<type D>
+struct Allocator { D *data; int (*allocate)(D *, int); int id; };
+struct Bump { int used; };
+int bump_alloc(struct Bump *b, int n) { b->used += n; return b->used; }
+struct Bump bump;
+Allocator get_bump(void) { return {.data = &bump, .allocate = bump_alloc, .id = 7}; }
+
+int classify(Point p) {
+	switch (p) {
+	case {1, int y}: { return y; }
+	case {2 ... 4, auto y}: { y += 1; return y + 1000; }
+	case {.y = 0}: return -1;
+	default: return -2;
+	}
+}
+int rng(int x) {
+	switch (x) {
+	case 1 ... 3: return 1;
+	case 7: return 7;
+	case 10 ... 5000: return 2;
+	default: return 0;
+	}
+}
+mono forall<type T>
+struct Pair { T first; T second; };
+mono forall<type T>
+T second(Pair<T> p) { {auto a, auto b} = p; return b; }
+
+int main(void) {
+	{.x = int x, .y = int y} = get_point(3);
+	{auto a, auto b} = get_point(4);
+	{int, auto c} = get_point(5);
+	x += 1;
+	printf(cn"%d %d %d %d %d\n", x, y, a, b, c);
+	printf(cn"%d %d %d %d\n", classify(get_point(1)), classify(get_point(3)), classify(get_point(0)), classify(get_point(9)));
+	printf(cn"%d %d %d %d %d\n", rng(2), rng(7), rng(4999), rng(4), rng(5001));
+	for (int i = 0; i < 2; i++) {
+		switch (readf(i)) {
+		case {.kind = RESULT_OK, .data = auto val}: { printf(cn"ok %s\n", val); break; }
+		case {.kind = RESULT_ERR, .err = auto e}: { printf(cn"err %d\n", e); break; }
+		}
+	}
+	struct Bits bits = {5, 17, {8, 9}};
+	{auto ba, auto bb, {auto px, auto py}} = bits;
+	bb = 3;
+	printf(cn"%d %d %d %d\n", ba, bb, px, py);
+	Pair<int> pr = {1, 2};
+	Allocator al = get_bump();
+	{auto d, auto alloc} = al;
+	alloc(d, 5);
+	printf(cn"%d %d %d\n", alloc(d, 10), al.id, second(pr));
+	return 0;
+}

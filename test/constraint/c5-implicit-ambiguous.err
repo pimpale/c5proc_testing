@@ -1,0 +1,1 @@
+error: ambiguous givens for implicit parameter 'scale' of 'f': 'y' and 'x'

@@ -1,0 +1,401 @@
+type :Point.1 = { w, w, }
+export
+function :Point.1 $get_point(w %.1) {
+@start.1
+	%.2 =l alloc4 4
+	storew %.1, %.2
+	%.3 =l alloc4 8
+@body.2
+	%.4 =w loadw %.2
+	storew %.4, %.3
+	%.5 =l add %.3, 4
+	%.6 =w loadw %.2
+	%.7 =w mul %.6, 10
+	storew %.7, %.5
+	ret %.3
+}
+type :.3 = { { l } { w } }
+type :Res.2 = { w, :.3, }
+data $.Lstring.3 = align 1 { b "contents\000", }
+export
+function :Res.2 $readf(w %.1) {
+@start.3
+	%.2 =l alloc4 4
+	storew %.1, %.2
+	%.4 =l alloc8 16
+	%.7 =l alloc8 16
+@body.4
+	%.3 =w loadw %.2
+	jnz %.3, @if_true.5, @if_false.6
+@if_true.5
+	storew 0, %.4
+	%.5 =l add %.4, 4
+	storew 0, %.5
+	%.6 =l add %.4, 8
+	storel $.Lstring.3, %.6
+	ret %.4
+@if_false.6
+	storew 1, %.7
+	%.8 =l add %.7, 4
+	storew 0, %.8
+	%.9 =l add %.7, 8
+	storew 404, %.9
+	%.10 =l add %.7, 12
+	storew 0, %.10
+	ret %.7
+}
+export
+function w $bump_alloc(l %.1, w %.3) {
+@start.7
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc4 4
+	storew %.3, %.4
+@body.8
+	%.5 =l loadl %.2
+	%.6 =l add %.5, 0
+	%.7 =w loadw %.6
+	%.8 =w loadw %.4
+	%.9 =w add %.7, %.8
+	storew %.9, %.6
+	%.10 =l loadl %.2
+	%.11 =l add %.10, 0
+	%.12 =w loadw %.11
+	ret %.12
+}
+type :Allocator.4 = { l, l, w, }
+export
+function :Allocator.4 $get_bump() {
+@start.9
+	%.1 =l alloc8 24
+@body.10
+	storel extern $bump, %.1
+	%.2 =l add %.1, 8
+	storel extern $bump_alloc, %.2
+	%.3 =l add %.1, 16
+	storew 7, %.3
+	%.4 =l add %.1, 20
+	storew 0, %.4
+	ret %.1
+}
+export
+function w $classify(:Point.1 %.1) {
+@start.11
+	%.2 =l alloc4 8
+@body.12
+	%.3 =w loadw %.1
+	storew %.3, %.2
+	%.4 =l add %.1, 4
+	%.5 =l add %.2, 4
+	%.6 =w loadw %.4
+	storew %.6, %.5
+	jmp @switch_cond.13
+@switch_case.15
+	%.7 =l add %.2, 4
+	%.8 =w loadw %.7
+	ret %.8
+@switch_case.16
+	%.9 =l add %.2, 4
+	%.10 =w loadw %.9
+	%.11 =w add %.10, 1
+	storew %.11, %.9
+	%.12 =l add %.2, 4
+	%.13 =w loadw %.12
+	%.14 =w add %.13, 1000
+	ret %.14
+@switch_case.17
+	%.15 =w neg 1
+	ret %.15
+@switch_default.18
+	%.16 =w neg 2
+	ret %.16
+@switch_cond.13
+	%.17 =l add %.2, 0
+	%.18 =w loadw %.17
+	%.19 =w ceqw %.18, 1
+	jnz %.19, @switch_case.15, @switch_test.19
+@switch_test.19
+	%.20 =l add %.2, 0
+	%.21 =w loadw %.20
+	%.22 =w csgew %.21, 2
+	jnz %.22, @logic_and.21, @switch_test.20
+@logic_and.21
+	%.23 =l add %.2, 0
+	%.24 =w loadw %.23
+	%.25 =w cslew %.24, 4
+	jnz %.25, @switch_case.16, @switch_test.20
+@switch_test.20
+	%.26 =l add %.2, 4
+	%.27 =w loadw %.26
+	jnz %.27, @switch_test.22, @switch_case.17
+@switch_test.22
+	jmp @switch_default.18
+@switch_join.14
+	ret
+}
+export
+function w $rng(w %.1) {
+@start.23
+	%.2 =l alloc4 4
+	storew %.1, %.2
+@body.24
+	%.3 =w loadw %.2
+	jmp @switch_cond.25
+@switch_case.27
+	ret 1
+@switch_case.28
+	ret 7
+@switch_case.29
+	ret 2
+@switch_default.30
+	ret 0
+@switch_cond.25
+	%.4 =w csgew %.3, 1
+	jnz %.4, @logic_and.32, @switch_test.31
+@logic_and.32
+	%.5 =w cslew %.3, 3
+	jnz %.5, @switch_case.27, @switch_test.31
+@switch_test.31
+	%.6 =w csgew %.3, 10
+	jnz %.6, @logic_and.34, @switch_test.33
+@logic_and.34
+	%.7 =w cslew %.3, 5000
+	jnz %.7, @switch_case.29, @switch_test.33
+@switch_test.33
+	%.8 =w ceqw %.3, 7
+	jnz %.8, @switch_case.28, @switch_ne.35
+@switch_ne.35
+	%.9 =w cultw %.3, 7
+	jnz %.9, @switch_lt.36, @switch_gt.37
+@switch_lt.36
+	jmp @switch_default.30
+@switch_gt.37
+	jmp @switch_default.30
+@switch_join.26
+	ret
+}
+data $.Lstring.9 = align 1 { b "%d %d %d %d %d\012\000", }
+data $.Lstring.10 = align 1 { b "%d %d %d %d\012\000", }
+data $.Lstring.11 = align 1 { b "ok %s\012\000", }
+data $.Lstring.12 = align 1 { b "err %d\012\000", }
+data $.Lstring.13 = align 1 { b "%d %d %d\012\000", }
+type :Pair.5 = { w, w, }
+export
+function w $main() {
+@start.38
+	%.1 =l alloc4 8
+	%.7 =l alloc4 8
+	%.13 =l alloc4 8
+	%.48 =l alloc4 4
+	%.51 =l alloc8 16
+	%.71 =l alloc4 12
+	%.88 =l alloc4 12
+	%.119 =l alloc4 8
+	%.121 =l alloc8 24
+	%.130 =l alloc8 24
+@body.39
+	%.2 =:Point.1 call extern $get_point(w 3)
+	%.3 =w loadw %.2
+	storew %.3, %.1
+	%.4 =l add %.2, 4
+	%.5 =l add %.1, 4
+	%.6 =w loadw %.4
+	storew %.6, %.5
+	%.8 =:Point.1 call extern $get_point(w 4)
+	%.9 =w loadw %.8
+	storew %.9, %.7
+	%.10 =l add %.8, 4
+	%.11 =l add %.7, 4
+	%.12 =w loadw %.10
+	storew %.12, %.11
+	%.14 =:Point.1 call extern $get_point(w 5)
+	%.15 =w loadw %.14
+	storew %.15, %.13
+	%.16 =l add %.14, 4
+	%.17 =l add %.13, 4
+	%.18 =w loadw %.16
+	storew %.18, %.17
+	%.19 =l add %.1, 0
+	%.20 =w loadw %.19
+	%.21 =w add %.20, 1
+	storew %.21, %.19
+	%.22 =l add %.1, 0
+	%.23 =w loadw %.22
+	%.24 =l add %.1, 4
+	%.25 =w loadw %.24
+	%.26 =l add %.7, 0
+	%.27 =w loadw %.26
+	%.28 =l add %.7, 4
+	%.29 =w loadw %.28
+	%.30 =l add %.13, 4
+	%.31 =w loadw %.30
+	%.32 =w call extern $printf(l $.Lstring.9, ..., w %.23, w %.25, w %.27, w %.29, w %.31)
+	%.33 =:Point.1 call extern $get_point(w 1)
+	%.34 =w call extern $classify(:Point.1 %.33)
+	%.35 =:Point.1 call extern $get_point(w 3)
+	%.36 =w call extern $classify(:Point.1 %.35)
+	%.37 =:Point.1 call extern $get_point(w 0)
+	%.38 =w call extern $classify(:Point.1 %.37)
+	%.39 =:Point.1 call extern $get_point(w 9)
+	%.40 =w call extern $classify(:Point.1 %.39)
+	%.41 =w call extern $printf(l $.Lstring.10, ..., w %.34, w %.36, w %.38, w %.40)
+	%.42 =w call extern $rng(w 2)
+	%.43 =w call extern $rng(w 7)
+	%.44 =w call extern $rng(w 4999)
+	%.45 =w call extern $rng(w 4)
+	%.46 =w call extern $rng(w 5001)
+	%.47 =w call extern $printf(l $.Lstring.9, ..., w %.42, w %.43, w %.44, w %.45, w %.46)
+	storew 0, %.48
+@for_cond.40
+	%.49 =w loadw %.48
+	%.50 =w csltw %.49, 2
+	jnz %.50, @for_body.41, @for_join.43
+@for_body.41
+	%.52 =w loadw %.48
+	%.53 =:Res.2 call extern $readf(w %.52)
+	%.54 =l loadl %.53
+	storel %.54, %.51
+	%.55 =l add %.53, 8
+	%.56 =l add %.51, 8
+	%.57 =l loadl %.55
+	storel %.57, %.56
+	jmp @switch_cond.44
+@switch_case.46
+	%.58 =l add %.51, 8
+	%.59 =l loadl %.58
+	%.60 =w call extern $printf(l $.Lstring.11, ..., l %.59)
+	jmp @switch_join.45
+@switch_case.47
+	%.61 =l add %.51, 8
+	%.62 =w loadw %.61
+	%.63 =w call extern $printf(l $.Lstring.12, ..., w %.62)
+	jmp @switch_join.45
+@switch_cond.44
+	%.64 =l add %.51, 0
+	%.65 =w loadw %.64
+	jnz %.65, @switch_test.48, @switch_case.46
+@switch_test.48
+	%.66 =l add %.51, 0
+	%.67 =w loadw %.66
+	%.68 =w ceqw %.67, 1
+	jnz %.68, @switch_case.47, @switch_test.49
+@switch_test.49
+	jmp @switch_join.45
+@switch_join.45
+@for_cont.42
+	%.69 =w loadw %.48
+	%.70 =w add %.69, 1
+	storew %.70, %.48
+	jmp @for_cond.40
+@for_join.43
+	storew 0, %.71
+	%.72 =w shl 5, 0
+	%.73 =w shl %.72, 29
+	%.74 =w shr %.73, 29
+	%.75 =w and %.72, 7
+	%.76 =w loadw %.71
+	%.77 =w and %.76, 18446744073709551608
+	%.78 =w or %.75, %.77
+	storew %.78, %.71
+	%.79 =w shl 17, 3
+	%.80 =w shl %.79, 24
+	%.81 =w shr %.80, 27
+	%.82 =w and %.79, 248
+	%.83 =w loadw %.71
+	%.84 =w and %.83, 18446744073709551367
+	%.85 =w or %.82, %.84
+	storew %.85, %.71
+	%.86 =l add %.71, 4
+	storew 8, %.86
+	%.87 =l add %.71, 8
+	storew 9, %.87
+	%.89 =w loadw %.71
+	storew %.89, %.88
+	%.90 =l add %.71, 4
+	%.91 =l add %.88, 4
+	%.92 =w loadw %.90
+	storew %.92, %.91
+	%.93 =l add %.90, 4
+	%.94 =l add %.91, 4
+	%.95 =w loadw %.93
+	storew %.95, %.94
+	%.96 =l add %.88, 0
+	%.97 =w shl 3, 3
+	%.98 =w shl %.97, 24
+	%.99 =w shr %.98, 27
+	%.100 =w and %.97, 248
+	%.101 =w loadw %.96
+	%.102 =w and %.101, 18446744073709551367
+	%.103 =w or %.100, %.102
+	storew %.103, %.96
+	%.104 =l add %.88, 0
+	%.105 =w loadw %.104
+	%.106 =w shl %.105, 29
+	%.107 =w shr %.106, 29
+	%.108 =l add %.88, 0
+	%.109 =w loadw %.108
+	%.110 =w shl %.109, 24
+	%.111 =w shr %.110, 27
+	%.112 =l add %.88, 4
+	%.113 =l add %.112, 0
+	%.114 =w loadw %.113
+	%.115 =l add %.88, 4
+	%.116 =l add %.115, 4
+	%.117 =w loadw %.116
+	%.118 =w call extern $printf(l $.Lstring.10, ..., w %.107, w %.111, w %.114, w %.117)
+	storew 1, %.119
+	%.120 =l add %.119, 4
+	storew 2, %.120
+	%.122 =:Allocator.4 call extern $get_bump()
+	%.123 =l loadl %.122
+	storel %.123, %.121
+	%.124 =l add %.122, 8
+	%.125 =l add %.121, 8
+	%.126 =l loadl %.124
+	storel %.126, %.125
+	%.127 =l add %.124, 8
+	%.128 =l add %.125, 8
+	%.129 =l loadl %.127
+	storel %.129, %.128
+	%.131 =l loadl %.121
+	storel %.131, %.130
+	%.132 =l add %.121, 8
+	%.133 =l add %.130, 8
+	%.134 =l loadl %.132
+	storel %.134, %.133
+	%.135 =l add %.132, 8
+	%.136 =l add %.133, 8
+	%.137 =l loadl %.135
+	storel %.137, %.136
+	%.138 =l add %.130, 0
+	%.139 =l loadl %.138
+	%.140 =l add %.130, 8
+	%.141 =l loadl %.140
+	%.142 =w call %.141(l %.139, w 5)
+	%.143 =l add %.130, 0
+	%.144 =l loadl %.143
+	%.145 =l add %.130, 8
+	%.146 =l loadl %.145
+	%.147 =w call %.146(l %.144, w 10)
+	%.148 =l add %.121, 16
+	%.149 =w loadw %.148
+	%.150 =w call extern $"second<int>"(:Pair.5 %.119)
+	%.151 =w call extern $printf(l $.Lstring.13, ..., w %.147, w %.149, w %.150)
+	ret 0
+}
+export comdat
+function w $"second<int>"(:Pair.5 %.1) {
+@start.50
+	%.2 =l alloc4 8
+@body.51
+	%.3 =w loadw %.1
+	storew %.3, %.2
+	%.4 =l add %.1, 4
+	%.5 =l add %.2, 4
+	%.6 =w loadw %.4
+	storew %.6, %.5
+	%.7 =l add %.2, 4
+	%.8 =w loadw %.7
+	ret %.8
+}
+export data $bump = align 4 { z 4 }

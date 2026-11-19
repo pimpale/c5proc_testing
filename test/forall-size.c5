@@ -1,11 +1,11 @@
 mono forall<type T, size N>
 struct Buf {
 	unsigned long len;
-	T data[N];
+	array<T, N> data;
 };
 
 mono forall<type T, size N>
-T last(T (*a)[N]) {
+T last(array<T, N> *a) {
 	_Static_assert(N > 0, "empty array");
 	return (*a)[N - 1];
 }
@@ -13,15 +13,15 @@ T last(T (*a)[N]) {
 mono forall<type T, size N>
 unsigned long grow(struct Buf<T, N> *b) {
 	struct Buf<T, N + 1> bigger;
-	return sizeof bigger + N;
+	return sizeof(bigger) + N;
 }
 
 forall<size N>
-int *first(int (*a)[N]) {
+int *first(array<int, N> *a) {
 	return *a;
 }
 
 unsigned long f(struct Buf<long, 3> *b) {
-	int arr[4];
+	array<int, 4> arr;
 	return last(&arr) + grow(b) + *first(&arr) + sizeof(struct Buf<char, 5>);
 }

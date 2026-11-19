@@ -176,8 +176,9 @@ monoinst(struct decl *d, struct genarg *args)
 	name = geninstname(d->gen, args);
 	q = QUALNONE;
 	t = typesubst(d->type, &q, d->gen, args);
-	/* XXX: instances should be shared between translation units */
-	n = mkdecl(name, d->kind, t, d->qual | q, LINKINTERN);
+	/* an instance has the linkage of the declaration it is an instance of */
+	n = mkdecl(name, d->kind, t, d->qual | q, d->linkage == LINKEXTERN ? LINKEXTERN : LINKINTERN);
+	n->comdat = n->linkage == LINKEXTERN;
 	n->asmname = name;
 	if (d->kind == DECLFUNC) {
 		n->u.func.isnoreturn = d->u.func.isnoreturn;
@@ -458,7 +459,7 @@ copystmts(struct copy *c, struct stmt *st)
 static struct stmt *
 copystmt(struct copy *c, struct stmt *st)
 {
-	struct stmt *n;
+	struct stmt *n, **end;
 	struct decl *d;
 
 	n = stmtref(c, st);
@@ -496,12 +497,24 @@ copystmt(struct copy *c, struct stmt *st)
 		break;
 	case STMTSWITCH:
 		n->u.switchstmt.cond = copyexpr(c, st->u.switchstmt.cond);
+		n->u.switchstmt.temp = copyexpr(c, st->u.switchstmt.temp);
+		n->u.switchstmt.subject = NULL;
+		/* the copies of case labels with patterns or ranges are added as they are copied */
+		n->u.switchstmt.tests = NULL;
 		n->u.switchstmt.body = copystmts(c, st->u.switchstmt.body);
 		n->u.switchstmt.seen = NULL;
 		break;
 	case STMTCASE:
 	case STMTDEFAULT:
 		n->u.caselabel.switchstmt = stmtref(c, st->u.caselabel.switchstmt);
+		if (st->kind == STMTCASE && st->u.caselabel.istest) {
+			n->u.caselabel.cond = copyexpr(c, st->u.caselabel.cond);
+			n->u.caselabel.block = NULL;
+			n->u.caselabel.nexttest = NULL;
+			for (end = &n->u.caselabel.switchstmt->u.switchstmt.tests; *end; end = &(*end)->u.caselabel.nexttest)
+				;
+			*end = n;
+		}
 		break;
 	case STMTWHILE:
 	case STMTDO:
@@ -622,7 +635,7 @@ instantiate(struct inst *i)
 	lower(f, body);
 	if (d->u.func.isnoreturn)
 		funchlt(f);
-	emitfunc(f, false);
+	emitfunc(f, i->inst->linkage == LINKEXTERN);
 	delfunc(f);
 	delscope(s);
 	ptrfree(&c.decls);

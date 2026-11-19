@@ -2,36 +2,30 @@ exists<type Data>
 struct Allocator {
 	Data *data;
 	void *(*allocate)(Data *, unsigned long);
+	int id;
 };
 
 struct Bump {
-	char buf[64];
+	array<char, 64> buf;
 	unsigned long used;
 };
 
-void *bump_alloc(struct Bump *, unsigned long);
-struct Bump bump;
+void *bump_alloc(Bump *, unsigned long);
+Bump bump;
 
-struct Allocator get_bump(void) {
-	return (struct Allocator){.data = &bump, .allocate = bump_alloc};
+Allocator get_bump(void) {
+	return {.data = &bump, .allocate = bump_alloc, .id = 1};
 }
 
-void *alloc_via(const struct Allocator *const a, unsigned long n) {
-	return a->allocate(a->data, n);
+void *alloc_via(const Allocator *a, unsigned long n) {
+	{.data = auto d, .allocate = auto alloc} = *a;
+	return alloc(d, n);
 }
 
-void *f(void) {
-	const struct Allocator la = get_bump();
-	typeof(la.data) d = la.data;
-	return la.allocate(d, 10);
-}
-
-mono exists<type S>
-struct Dyn {
-	int tag;
-	alignas(16) S state;
-};
-
-unsigned long g(void) {
-	return sizeof(struct Dyn);
+int f(void) {
+	Allocator la = get_bump();
+	{auto d, auto alloc, int id} = la;
+	typeof(d) d2 = d;
+	alloc(d2, 10);
+	return id + la.id;
 }

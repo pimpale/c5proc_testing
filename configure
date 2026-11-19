@@ -280,6 +280,7 @@ test -n "$DEFAULT_LDSO" && linkflags=$linkflags' "--dynamic-linker", "'$DEFAULT_
 
 printf "creating config.h... "
 cat >config.h <<EOF
+#define C5_INCLUDE_DIR "$prefix/lib/cproc/include"
 static const char target[]               = "$target";
 static const char *const startfiles[]    = {$startfiles};
 static const char *const endfiles[]      = {$endfiles};

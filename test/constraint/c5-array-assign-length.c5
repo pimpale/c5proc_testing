@@ -1,0 +1,1 @@
+void f(void) { array<int, 2> a = {1, 2}; array<int, 3> b; b = a; }

@@ -2,9 +2,10 @@ export
 function w $g() {
 @start.1
 @body.2
-	%.1 =w call $"ident<int>"(w 3)
+	%.1 =w call extern $"ident<int>"(w 3)
 	ret %.1
 }
+export comdat
 function w $"ident<int>"(w %.1) {
 @start.3
 	%.2 =l alloc4 4

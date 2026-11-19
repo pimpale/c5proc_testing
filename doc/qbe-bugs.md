@@ -72,6 +72,11 @@ a `phi` of the two addresses followed by a copy.
 **Workaround in this repository:** `monoinst` in `mono.c` uses
 `if`/`else` instead of a conditional expression.
 
+**Status:** fixed in the `qbe-comdat` fork (`amd64/isel.c`, regression
+test `test/isel7.ssa`), along with related cases where selected
+instructions clobber flags between a comparison and its jump or
+conditional move.
+
 **Likely fix:** in instruction selection or emission for the
 conditional move, materialize the operands before the comparison, or
 compute the extern address without changing the flags (for example,
@@ -103,9 +108,13 @@ becomes
 
 which the assembler rejects.
 
-**Current state in this repository:** instances are emitted as local
-symbols in each translation unit, so function pointers to the same
-instance compare unequal across translation units.
+**Status:** the `qbe-comdat` fork adds a `comdat` linkage keyword
+(`export comdat function ...`, `export comdat data ...`), which emits a
+weak symbol in its own COMDAT group. cproc now emits it for instances of
+mono functions and variables with external linkage, so this repository
+requires that fork; stock QBE 1.3 rejects the keyword. Instances of
+`static` declarations are still local to each translation unit, as are
+the static local variables of mono functions.
 
 ## 3. Quoted symbol names don't get the Darwin underscore prefix
 

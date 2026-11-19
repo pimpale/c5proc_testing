@@ -53,7 +53,7 @@ This enables type checking to be much simpler than C++.
 | Context | erased | mono | 
 |---|---|---|
 | struct| the struct cannot change layout no matter what arguments are passed. | the struct may change layout depending on what arguments are passed |
-| function| one function body will be emitted. The function cannot change behavior based on the type, and has no knowledge of the types internal structure, or even its size. The object name does not contain any angle brackets | the function implicitly has access to the size, alignment, etc of the type. Many function bodies are generated. |
+| function| one function body will be emitted. The function cannot change behavior based on the type, and has no knowledge of the type's internal structure, or even its size. The object name does not contain any angle brackets | the function implicitly has access to the size, alignment, etc of the type. Many function bodies are generated. |
 |constant| One object is generated | Many copies of the object are generated |
 
 
@@ -104,8 +104,8 @@ void* add(void* a, void* b, Add add_vtable) {
 }
 ```
 
-In `erased` code, you cannot use the variables to instantiate a mono body, since instantiation requries information that doesn't exist at this point, like the size and alignment of the type.
-You can however instantiate mono structs behind pointers. Eg, declaring a variable like `*Vec<T>` is fine in erased code, as long as you don't try to access it. 
+In `erased` code, you cannot use the variables to instantiate a mono body, since instantiation requires information that doesn't exist at this point, like the size and alignment of the type.
+You can however instantiate mono structs behind pointers. Eg, declaring a variable like `Vec<T>*` is fine in erased code, as long as you don't try to access it. 
 
 
 We'll get to `exists` in [a later section](#existential-types).
@@ -144,7 +144,9 @@ int main() {
 ```
 
 As long as there is at least one value of that type in scope declared with `given`, it will be selected during the function call. 
-The most lexically recent will always be selected.
+The deepest scoped matching given will be chosen, just like Scala. If there are multiple givens of the same scope, the most specific one will be chosen.
+An error will be raised on ambiguity. See [Implicit Argument Priority](#implicit-argument-priority) for details.
+
 Implicit function arguments have `given` automatically.
 
 Another example:
@@ -162,7 +164,20 @@ int main() {
 }
 ```
 
-The following example shows what happens if there are two contenders:
+Here's what we mean by more specific gets chosen:
+```C5
+mono forall<type T>
+given const Eq<T> BYTE_EQ = { .eq = byte_eq<T> };
+
+given const Eq<int> INT_LOGICAL_EQ = { .eq = int_eq };
+
+int main() {
+   assert_equal<int>(1, 1); // uses INT_LOGICAL_EQ
+   assert_equal<double>(1.0, 1.0); // uses BYTE_EQ<double>, since it is the most specific that fits.
+}
+```
+
+Here's how nesting priority works.
 ```C5
 int addInt(int a, int b) {
 	return a + b;
@@ -179,7 +194,7 @@ int addIntTrapping(int a, int b) {
 int main() {
     given Add<int> add_int = { .add = addInt };
     given Add<int> add_int_trapping = { .add = addIntTrapping };
-    // uses add_int_trapping
+    // error: ambiguous
     add<int>(1, 2);
 
     { 
@@ -194,19 +209,9 @@ int main() {
 }
 ```
 
-You can also use `mono forall` givens:
-```C5
-mono forall<type T>
-given const Eq<T> BYTE_EQ = { .eq = byte_eq<T> };
-
-int main() {
-   assert_equal<int>(1, 1); // uses BYTE_EQ<int>
-   assert_equal<double>(1.0, 1.0); // uses BYTE_EQ<double>
-}
-```
 
 Beware of things like these:
-```
+```C5
 mono forall<type T>
 given T x;
 
@@ -215,20 +220,118 @@ add<int>(1, 2); // probably crashes at runtime, but compiles.
 
 Another footgun is duplicate implicit arguments of the same type. They will end up resolving to the exact same variable.
 
+### Derived Instances
+
+Givens can also be functions. This allows creating more complex vtables on demand from other vtables. In other languages with these behaviors, the parameters that go into these vtable constructors are often called "premises".
+The following example illustrates:
+
+```C5
+given int SOME_INT = 1;
+given double SOME_DOUBLE = 2.0;
+
+
+struct Thing {
+    int* i;
+    double* d;
+};
+
+// given functions have all parameters automatically resolved implicitly.
+given Thing SOME_THING(int *si, double *sd) {
+    return {
+        .i=si, 
+        .d=sd
+    }; 
+}
+```
+
+On its own this is not particularly useful, since it would be equally easy to directly set the fields to SOME_INT or SOME_DOUBLE.
+The main use case for this is when we need to automatically create a `given` based on parameters. 
+For example, suppose we have a vector of integers `Vec<int>` and a corresponding implementation of equality for int.
+How can we create an implementation of logical equality for a vector of integers?
+
+Givens with premises can be used with `mono forall` to solve this:
+```C5
+
+forall<type T>
+struct Eq {
+    // if we are comparing containers, then inner is a pointer to the implementation of equality for the element
+    // this pattern is common for vtables that are to be implemented on data structures
+    // This version of Eq doesn't use existentials, which we'll introduce later.
+    const void* inner;
+    bool (*eq)(const void* inner, T* a, T* b);
+};
+
+bool eq_int(const void* inner, int* a, int* b) {
+    return *a == *b;
+}
+
+given const Eq<int> EQ_INT_LOGICAL = {
+    .inner = NULL,
+    .eq = eq_int
+};
+
+given const Eq<double> EQ_DOUBLE_LOGICAL = { /* ditto */ };
+
+mono forall<type T>
+bool eq_vec_logical(const void* inner_raw, Vec<T>* a, Vec<T>* b) {
+    const Eq<T>* inner = inner_raw;
+    size_t len = vec_len(a);
+    if(vec_len(b) != len) {
+        return false;
+    }
+    for(size_t i = 0; i < len; i++) {
+        if(!inner->eq(inner->inner, vec_at(a, i), vec_at(b, i))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+mono forall<type T>
+given Eq<Vec<T>> EQ_VEC_LOGICAL(const Eq<T>* elem) { 
+    return {
+        .inner = elem,
+        .eq = eq_vec_logical<T>
+    };
+}
+
+forall<type T>
+bool eq(T* a, T* b, implicit const Eq<T>* e) {
+    return e->eq(e->inner, a, b);
+}
+
+int main() {
+    Vec<int> ints_a = {/*something*/};
+    Vec<int> ints_b = {/*something*/};
+    eq(&ints_a, &ints_b);
+    // desugars to
+    // given Eq<Vec<int>> t0 = EQ_VEC_LOGICAL(&EQ_INT_LOGICAL);
+    // eq(&ints_a, &ints_b, .e=&t0);
+}
+
+```
+
+The given resolution process will resolve a T* if a given of T exists in scope by taking the address of that T.
+The given resolution process also applies the Paterson rule: the selected premises will always be less or equally as complex than the output of the function.
+This prevents infinite loops.
+The temporaries created by this process live as long as the block they are enclosed in.
+
+One limitation of derived instances is that they do not live long enough to store in data structures by default. 
+
 ### Const Polymorphism
 
 In C, we have const pointers: 
 ```c
-int strlen(const char*);
+size_t strlen(const char*);
 ```
 The const is basically just to document permission, and can easily be casted away. Few optimizations can be made on its basis.
 However, it has an annoying property that we see in functions like strchr:
 ```c
 // should it accept const char* instead?
-char* strchr(char *in, int c)
+char* strchr(char *in, int c);
 ```
 The constness of the output should depend on the constness of the input. `strchr` does not modify its input, but the user may want to. 
-Thus, returning a const char*  is inappropriate when the input is not const. However, making it a normal char* forbids it from being used with const input.
+Thus, returning a const char* is inappropriate when the input is not const. However, making it a normal char* forbids it from being used with const input.
 C fixes it using _Generic:
 ```c
 #define strchr(s, c) _Generic((s), \
@@ -249,7 +352,7 @@ This has essentially the same behavior, but is better integrated with the polymo
 C5 has three different kinds of entities that may be indexed with []:
 1. Classical C arrays: declared as `int x[5];`. These undergo decay in parameters, as before.
 2. Proper array types declared as `array<int, 5> x;`. These can be passed and returned by value, like arrays in structs.
-3. Finally, a slice type written as `slice<int>` Under the hood, it is a two element struct, with a pointer, and a length field.
+3. Finally, a slice type written as `slice<int>`. Under the hood, it is a two element struct, with a pointer, and a length field.
 
 #### C5 Arrays
 
@@ -263,7 +366,7 @@ The primary purpose of the slice is to enable syntax sugar around dynamic slicin
 It also can basically replace the null terminated string in most contexts. slice<char> is pretty good. 
 You should use unicode functions where needed though, as chars are not code points.
 A slice's length can be accessed via .length, and the underlying data pointer via .data.
-Pointer arithmetic and indexing on a slice works as if on the .data component.
+Pointer arithmetic and indexing on a slice works as if on the .data component (specifically, `[]`, `+`, `-`). However, dereferencing does not work.
 
 Slices cannot be initialized via array initializer syntax though, as this conflicts with their struct based nature: 
 ```C5
@@ -274,7 +377,7 @@ A slice can be created explicitly via struct construction, or through slicing:
 The specific slicing syntax that we can use (applies to slices, pointers and arrays) is p[n ... m] and p[... m], when we care about a 0 indexed prefix.
 Slice length for p[n ... m] is m - n + 1. Thus, p[0 ... len - 1] is safe even when len is 0.
 p[n ...] and p[...] are also permissible when indexing a slice, C5 array, or C array, for a slice to the end.
-Slice ranges are inclusive. This is the same syntax used in c29 case ranges.
+Slice ranges are inclusive. This is the same syntax used in C29 case ranges.
 
 The actual way to get a slice of [0] is:
 ```C5
@@ -291,6 +394,7 @@ C5 supports both C style null terminated strings and Pascal style strings with a
 C5 supports two new prefixes before strings:
 * `p"`: pascal style. No null terminator.
 * `c"`: c style, with a null terminator.
+
 Both of these can be combined with other prefixes, eg `pL`, or `cu8`. The p or c must come before the other encoding flags.
 
 It also supports a new prefix:
@@ -300,10 +404,11 @@ These prefixes can be used from both C compatible and C incompatible code.
 
 In C-incompatible mode (described below), plain unprefixed string literals are pascal style. In C-compatible, they are c style, as expected.
 
-Additionally, in C-incompatible mode, all strings (both pascal and c) are in UTF8 (the equivalent of c29's u8 strings) unless prefixed with `n`. This means strings are of type unsigned char instead of normal char. Both types of string literal in C-incompatible mode also are C5 array typed. To give an example:
+Additionally, in C-incompatible mode, all strings (both pascal and c) are in UTF8 (the equivalent of C23's u8 strings) unless prefixed with `n`. This means strings are of type unsigned char instead of normal char. Both types of string literal in C-incompatible mode also are C5 array typed. In C compatible mode they are both C array typed. To give an example:
 ```C5
 // c compatible mode
 char x[2] = "a";
+char y[1] = p"a";
 // c incompatible mode
 array<unsigned char, 1> x = "a";
 ```
@@ -323,6 +428,7 @@ struct Point {
 // or simply
 {auto x, auto y} = get_point();
 ```
+Destructuring is not allowed at the top level, only in blocks.
 
 Each binding is introduced with a type name or auto. This keeps parsing C5 simple with limited lookahead.
 
@@ -340,7 +446,7 @@ switch(get_point()) {
     return y;
   }
   case {2, int y}: { 
-    printf("hello %d", y);
+    printf(cn"hello %d", y);
     break;
   }
 }
@@ -366,14 +472,14 @@ Result<char*, FileSystemErr> readFile(char* filename) {
 
 
 // ...
-{ResultKind kind, char* data, FileSystemErr err} = readFile("foo.txt");
+{ResultKind kind, char* data, FileSystemErr err} = readFile(cn"foo.txt");
 if(kind != RESULT_OK) {
   return err;
 }
 
 // or, to use pattern matching:
 char* data;
-switch(readFile("foo.txt")) {
+switch(readFile(cn"foo.txt")) {
   case {.kind=RESULT_OK, .data=auto val}: {
     data = val;
     break;
@@ -419,7 +525,7 @@ struct Allocator {
     void* (*allocate)(AllocatorData*, size_t);
 };
 ```
-The former is the traditional C way of typing this struct. It doesn't have type safety. void* can point to whatver.
+The former is the traditional C way of typing this struct. It doesn't have type safety. void* can point to whatever.
 The latter has type safety, but the downside is that it has to carry around an extra AllocatorData type argument. 
 We can't add two different allocators of the latter to a vector, even if their layouts and use are exactly the same:
 ```C5
@@ -446,38 +552,16 @@ const Allocator aa = get_arena_allocator();
 Vec<Allocator> v = ...;
 ```
 
-A key fact about existential types is that two different allocator values members' types are different: typeof(la.data) != typeof(aa.data). 
+A key fact about existential types is that the members of two different allocator values have different types: typeof(la.data) != typeof(aa.data). 
 Essentially, every value of an existential type gets its own unique type variables that are not interchangeable.
 Thus, existential types come with restrictions:
-* When you initialize the struct, or create a new value of the struct, the types are checked for consistency. You cannot use one type for E in one member, and another in another member.
-* Accessing a member of the struct that contains the existential type (as both a.data and a.allocate do) is only possible when X can't be changed when it's in use. 
-    * Eg, suppose that I call reset_allocator() in between accessing a.data and a.allocate.
-    * So, the struct containing the existential must be `const`, or accessed through a chain of const pointers. 
-    * In general, changing the value of an existential types between reads is undefined behavior.
+* When you initialize the struct, or create a new value of the struct, the types are checked for consistency. You cannot use one type for the existential parameter in one member, and another in another member.
 * Members of the struct that don't mention the existential type can be accessed freely.
-* Alternatively, the existential type can be destructured. This is always possible.
+* Members of the struct that mention the existential type cannot be accessed through dot notation. They can only be accessed through destructuring, or initialization of the entire struct. The reason why only destructuring is permitted is that it gives the variables consistent and unique types that do not funge with other existential types.
 
 #### Monomorphized Types in Structs
 
-The above makes use of erased existential types, where the type is only referred to behind a pointer. If you are willing to monomorphize, you can directly include the erased type:
-```C5
-mono exists<type S> 
-struct Allocator {
-    const AllocatorVT* vt; // the functions in the vtable take Allocator* as an argument
-    alignas(16) S state;
-};
-
-Allocator* a = make_arena(heap, 64 * 1024);
-a->vt->alloc(a, 128);
-```
-
-The requirement is that the existential type come at the end of the struct. This is because it is unsized, like a flexible array member.
-Like other structs with flexible array members, they cannot be placed in other structs or arrays unless behind a pointer.
-You are required to put an alignas on the flexible member if you want to be able to access it, so that the offset becomes known.
-It is legal to leave it unaligned, but then you will not be able to access that member.
-In our example, this is how the functions in vt can access it. Doing this puts structs with an unsized member like this on the same footing as flexible array members now.
-
-Like flexible array members, copying and sizeof do not include the size of the unsized struct. This is for consistency.
+Planned, but not implemented in v1.
 
 #### Existential Types on Functions
 
@@ -510,12 +594,13 @@ Both `forall` and `exists` use the same type-parameter-list. This list is enclos
 ```
 forall<type A, size B, constness C>
 ```
-Each parameter must be either `type`, `size`, `constness`.
+Each parameter must be one of `type`, `size`, or `constness`.
 
 Note that `constness` will always be erased, even if `mono` is applied. 
 
 A `<` following an identifier opens an argument list only if that identifier names a `forall` entity in the current scope, or is one of the keywords `array` and `slice`; otherwise it is the less-than operator.
 Inside an argument list, a `>>` token closes two lists, so `Vec<Vec<int>>` is valid. A `size` argument that contains a top-level `>` or `>>` must be parenthesized, e.g. `array<int, (N > 4 ? 8 : 4)>`.
+* This also applies to top level `<`, `==`, `&`, `|`, `&&`, and `?:`.
 
 
 ### Type parameters
@@ -537,7 +622,7 @@ void foo(T a) {
     struct Pair<T> p = { a, a };
 }
 ```
-In C, you can do brace elision to initialize subobjects. However, we ban this in the context. For example, if T were `struct {int i; int j}`, then initializing it with {1,2,1,2} would work. However, in C5 in this context, you can't do this. Each member that is a type variable must be initialized by a discrete expression (so {{}, {1, 2}} would work).
+In C, you can do brace elision to initialize subobjects. However, we ban this in this context. For example, if T were `struct {int i; int j}`, then initializing it with {1,2,1,2} would work. However, in C5 in this context, you can't do this. Each member that is a type variable must be initialized by a discrete expression (so {{}, {1, 2}} would work).
 
 ### Constness parameters
 Constness has two values: `const` and `mut`. Mut is the default. It captures the difference between a type having const and not. It does not capture other modifiers like atomic, volatile, or restrict.
@@ -579,10 +664,20 @@ int main() {
     vec_push(&x, 1);
 
     // automatically infers type and uses the selected instance
-    // the most recent match that satisfies constraints is used.
+    // the most specific given that matches is used.
     int* f = first(&x);
 }
 ```
+
+### Implicit Argument Priority
+We generally follow the lead of Scala in defining the selected instance as the one that is compatible at the deepest scope. Ties are broken by having the most specific compatible type.
+Specificity is a partial order on the givens' types. Type A is more specific than type B if A can be obtained from B by substituting for B's type variables, but not vice versa.
+
+Examples:
+* `Eq<int>` is more specific than `Eq<T>`.
+* `Eq<Vec<int>>` is more specific than `Eq<Vec<T>>`, which is more specific than `Eq<T>`.
+* `Eq<Pair<T, T>>` is more specific than `Eq<Pair<A, B>>`.
+* `Eq<Pair<int, U>>` and `Eq<Pair<T, int>>` are incomparable.
 
 ### Implicit Arguments and Type Inference
 
@@ -598,15 +693,17 @@ Suppose we have a call `f<type_args>(args, .overrides=overrides)`. Then:
     * the whole initializer of a declaration with a concrete type.
     * In other contexts, this is skipped.
 4. Finally, we search for givens for the remaining implicit parameters:
-    * We search all candidates in scope, most recent first. 
-    * The first candidate whose type unifies with the parameter is selected.
+    * We collect all givens in scope whose type unifies with the parameter. For given functions, we collect those which have the return type unifying with the parameter.
+    * The candidate with the deepest scope that unifies is picked. If there are many candidates at the same scope level, the most specific candidate is selected. Remaining ambiguity is an error (see [Implicit Argument Priority](#implicit-argument-priority)).
+    * If the candidate is a given function with premises, we resolve those premises.
     * There is no backtracking.
 
 
 In both `erased` and `mono` contexts, the inference proceeds treating the type parameters as an opaque type. It only happens once per definition, not once per instantiation.
 
 ### Linking
-Each instantiation of a mono function or variable is a single entity across the program.
+Each instantiation of a mono function or variable is a distinct entity that has the linkage rules that are otherwise appropriate for it.
+Comdat linkage will be used if external linkage is requested.
 
 It has a canonical name:
 * One space after each comma.
@@ -640,9 +737,9 @@ Mode applies per file. When the file being parsed or included ends in .c or .h, 
 In idiomatic C5, the following are banned:
 1. VLAs
 2. _Generic
-3. Normal C array
+3. Normal C arrays
 
-Also, like in C++, struct names and enum names are accessible without prefix "struct", "enum", or "union". This follows C++ rules.
+Also, like in C++, struct, union, and enum names are accessible without the prefix "struct", "union", or "enum". This follows C++ rules. Like C++, an ordinary identifier in the same or inner scope can hide the name of the struct/enum/union.
 
 The list of reserved keywords in C5 incompatible mode is:
 * mono

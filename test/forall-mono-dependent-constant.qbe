@@ -3,11 +3,12 @@ export
 function l $g(:big.1 %.1) {
 @start.1
 @body.2
-	%.2 =l call $"f<int>"(w 1)
-	%.3 =l call $"f<big>"(:big.1 %.1)
+	%.2 =l call extern $"f<int>"(w 1)
+	%.3 =l call extern $"f<big>"(:big.1 %.1)
 	%.4 =l add %.2, %.3
 	ret %.4
 }
+export comdat
 function l $"f<int>"(w %.1) {
 @start.3
 	%.2 =l alloc4 4
@@ -18,6 +19,7 @@ function l $"f<int>"(w %.1) {
 	%.5 =l add 4, 12
 	ret %.5
 }
+export comdat
 function l $"f<big>"(:big.1 %.1) {
 @start.5
 	%.2 =l alloc4 24

@@ -1,0 +1,3 @@
+forall<type T> struct Eq { int (*eq)(T *, T *); };
+mono forall<type T> struct Vec { T *p; };
+forall<type T> given Eq<T> shrink(const Eq<Vec<T>> *e);

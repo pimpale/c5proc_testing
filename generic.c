@@ -232,11 +232,18 @@ typesubst(struct type *t, enum typequal *tq, struct generic *g, struct genarg *a
 				n->incomplete = exprhasparamkind(len, false);
 				n->prop |= PROPDEPLEN;
 				n->u.array.length = len;
+				n->u.array.byvalue = t->u.array.byvalue;
 				return n;
 			}
 			if (len->type->u.arith.issigned && len->u.constant.u >> 63)
 				error(&tok.loc, "array length must be non-negative");
-			return mkarraytype(n, q, len->u.constant.u);
+			n = mkarraytype(n, q, len->u.constant.u);
+			if (t->u.array.byvalue) {
+				n->u.array.byvalue = true;
+				n->u.array.length = len;
+				n->incomplete = false;
+			}
+			return n;
 		}
 		if (t->u.array.length && t->u.array.length->kind == EXPRCONST)
 			n = mkarraytype(n, q, t->u.array.length->u.constant.u);
@@ -244,8 +251,12 @@ typesubst(struct type *t, enum typequal *tq, struct generic *g, struct genarg *a
 			n = mkarraytype(n, q, 0);
 		else
 			n = mkarraytype(n, q, t->size / t->base->size);
-		if (typedep(n))
+		if (typedep(n) || t->u.array.byvalue)
 			n->u.array.length = t->u.array.length;
+		if (t->u.array.byvalue) {
+			n->u.array.byvalue = true;
+			n->incomplete = false;
+		}
 		return n;
 	case TYPEFUNC:
 		n = mktype(TYPEFUNC, t->prop);
@@ -530,9 +541,12 @@ genunify(struct generic *g, struct genarg *bind, struct type *p, enum typequal p
 			return false;
 		return genunify(g, bind, p->base, bq, a->base, a->qual);
 	case TYPEARRAY:
-		if (a->kind != TYPEARRAY)
+		if (a->kind != TYPEARRAY || a->u.array.byvalue != p->u.array.byvalue)
 			return false;
-		if (p->prop & PROPDEPLEN && p->u.array.length->kind == EXPRSIZEPARAM && p->u.array.length->u.sizeparam.gen == g) {
+		if (p->prop & PROPDEPLEN && a->prop & PROPDEPLEN) {
+			if (!unifysize(g, bind, p->u.array.length, a->u.array.length))
+				return false;
+		} else if (p->prop & PROPDEPLEN && p->u.array.length->kind == EXPRSIZEPARAM && p->u.array.length->u.sizeparam.gen == g) {
 			if (a->incomplete || a->prop & (PROPVM | PROPDEPLEN) || !a->base->size)
 				return false;
 			if (!unifysize(g, bind, p->u.array.length, mkconstsize(a->size / a->base->size)))
@@ -754,6 +768,8 @@ typestr(struct array *buf, struct type *t, enum typequal q, const char *inner)
 		free(tmp.val);
 		return;
 	case TYPEARRAY:
+		if (t->u.array.byvalue)
+			break;
 		addstr(&tmp, inner);
 		if (t->incomplete) {
 			addstr(&tmp, "[]");
@@ -808,6 +824,20 @@ typestr(struct array *buf, struct type *t, enum typequal q, const char *inner)
 	case TYPEPARAM:
 		addstr(buf, t->u.param.name);
 		break;
+	case TYPEARRAY:
+		addstr(buf, "array<");
+		typestr(buf, t->base, t->qual, "");
+		if (t->u.array.length && t->u.array.length->kind == EXPRSIZEPARAM) {
+			addstr(buf, ", ");
+			addstr(buf, t->u.array.length->u.sizeparam.gen->params[t->u.array.length->u.sizeparam.index].name);
+		} else if (t->prop & PROPDEPLEN || typedep(t->base)) {
+			addstr(buf, ", ?");
+		} else {
+			snprintf(num, sizeof(num), ", %llu", t->base->size ? t->size / t->base->size : 0);
+			addstr(buf, num);
+		}
+		addstr(buf, ">");
+		break;
 	case TYPEENUM:
 		/* an enum type is compatible with its underlying integer type */
 		switch (t->size) {
@@ -851,6 +881,395 @@ geninstname(struct generic *g, struct genarg *args)
 
 	addstr(&buf, g->name);
 	argsstr(&buf, g, args);
+	arrayaddbuf(&buf, "", 1);
+	return buf.val;
+}
+
+/* the built-in generic struct that slice<T> is an instance of */
+static struct generic *slicegen;
+
+struct type *
+mkslicetype(struct type *elem, enum typequal qual)
+{
+	struct generic *g;
+	struct genarg *args;
+	struct member *data, *length;
+	struct type *t;
+	enum typequal q;
+
+	if (!slicegen) {
+		g = mkgeneric(false);
+		g->name = "slice";
+		g->nparam = 1;
+		g->params = xmalloc(sizeof(g->params[0]));
+		memset(g->params, 0, sizeof(g->params[0]));
+		g->params[0].kind = GENTYPE;
+		g->params[0].name = "T";
+		g->params[0].type = mkparamtype(g, 0, "T");
+		length = xmalloc(sizeof(*length));
+		memset(length, 0, sizeof(*length));
+		length->name = "length";
+		length->type = &typeulong;
+		length->offset = 8;
+		data = xmalloc(sizeof(*data));
+		memset(data, 0, sizeof(*data));
+		data->name = "data";
+		data->type = mkpointertype(g->params[0].type, QUALNONE);
+		data->next = length;
+		t = mktype(TYPESTRUCT, 0);
+		t->size = 16;
+		t->align = 8;
+		t->u.structunion.tag = "slice";
+		t->u.structunion.members = data;
+		t->u.structunion.gen = g;
+		t->u.structunion.genargs = genidentity(g);
+		g->pattern = t;
+		slicegen = g;
+	}
+	args = xmalloc(sizeof(*args));
+	memset(args, 0, sizeof(*args));
+	args->type = elem;
+	args->qual = qual;
+	q = QUALNONE;
+	return geninst(slicegen, args, &q);
+}
+
+bool
+typeisslice(struct type *t)
+{
+	return slicegen && t->kind == TYPESTRUCT && t->u.structunion.gen == slicegen;
+}
+
+/* a copy of g with new parameters, and the arguments for g that refer to them */
+struct generic *
+genfresh(struct generic *g, struct genarg **args)
+{
+	struct generic *n;
+	size_t i;
+
+	n = mkgeneric(g->ismono);
+	n->name = g->name;
+	n->nparam = g->nparam;
+	n->params = xreallocarray(NULL, g->nparam, sizeof(n->params[0]));
+	for (i = 0; i < g->nparam; ++i) {
+		n->params[i] = g->params[i];
+		if (g->params[i].kind == GENTYPE)
+			n->params[i].type = mkparamtype(n, i, g->params[i].name);
+	}
+	*args = genidentity(n);
+	return n;
+}
+
+/*
+Two-way unification, used to match the type of a given against the type
+of an implicit parameter. The types on either side may refer to the
+parameters of g[0] and g[1], which are bound in bind[0] and bind[1].
+Only type and size parameters are bound; qualifiers must agree.
+*/
+static int
+unifyvar(struct unifier *u, struct type *t)
+{
+	if (t->kind != TYPEPARAM)
+		return -1;
+	if (u->g[0] && t->u.param.gen == u->g[0])
+		return 0;
+	if (u->g[1] && t->u.param.gen == u->g[1])
+		return 1;
+	return -1;
+}
+
+static int
+unifysizevar(struct unifier *u, struct expr *e)
+{
+	if (e->kind != EXPRSIZEPARAM)
+		return -1;
+	if (u->g[0] && e->u.sizeparam.gen == u->g[0])
+		return 0;
+	if (u->g[1] && e->u.sizeparam.gen == u->g[1])
+		return 1;
+	return -1;
+}
+
+static bool
+unifysizes(struct unifier *u, struct expr *a, struct expr *b, int depth)
+{
+	struct genarg *bd;
+	int k;
+
+	if (depth > 64)
+		return false;
+	k = unifysizevar(u, a);
+	if (k >= 0) {
+		bd = &u->bind[k][a->u.sizeparam.index];
+		if (bd->size && unifysizevar(u, bd->size) != k)
+			return unifysizes(u, bd->size, b, depth + 1);
+		if (unifysizevar(u, b) == k && b->u.sizeparam.index == a->u.sizeparam.index)
+			return true;
+		bd->size = b;
+		return true;
+	}
+	k = unifysizevar(u, b);
+	if (k >= 0) {
+		bd = &u->bind[k][b->u.sizeparam.index];
+		if (bd->size && unifysizevar(u, bd->size) != k)
+			return unifysizes(u, a, bd->size, depth + 1);
+		bd->size = a;
+		return true;
+	}
+	return sizesame(a, b);
+}
+
+static struct expr *
+arraylen(struct type *t)
+{
+	if (t->prop & PROPDEPLEN)
+		return t->u.array.length;
+	if (t->incomplete || t->prop & PROPVM || !t->base->size && !t->u.array.byvalue)
+		return NULL;
+	if (t->u.array.length && t->u.array.length->kind == EXPRCONST)
+		return t->u.array.length;
+	return mkconstsize(t->base->size ? t->size / t->base->size : 0);
+}
+
+static bool
+unifytypes(struct unifier *u, struct type *a, enum typequal aq, struct type *b, enum typequal bq, int depth)
+{
+	struct genarg *bd, *aargs, *bargs;
+	struct generic *tg;
+	struct decl *ap, *bp;
+	struct expr *al, *bl;
+	size_t i;
+	int k;
+
+	if (depth > 64)
+		return false;
+	k = unifyvar(u, a);
+	if (k >= 0) {
+		bd = &u->bind[k][a->u.param.index];
+		if (bd->type && bd->type != a)
+			return unifytypes(u, bd->type, bd->qual | aq, b, bq, depth + 1);
+		if (b == a)
+			return aq == bq;
+		/* the variable takes the qualifiers of the other side that it does not already have */
+		if ((aq & bq) != aq)
+			return false;
+		bd->type = b;
+		bd->qual = bq & ~aq;
+		return true;
+	}
+	k = unifyvar(u, b);
+	if (k >= 0) {
+		bd = &u->bind[k][b->u.param.index];
+		if (bd->type && bd->type != b)
+			return unifytypes(u, a, aq, bd->type, bd->qual | bq, depth + 1);
+		if ((aq & bq) != bq)
+			return false;
+		bd->type = a;
+		bd->qual = aq & ~bq;
+		return true;
+	}
+	if (aq != bq)
+		return false;
+	if (a == b)
+		return true;
+	if (a->kind != b->kind)
+		return typecompatible(a, b);
+	switch (a->kind) {
+	case TYPEPOINTER:
+		return unifytypes(u, a->base, a->qual, b->base, b->qual, depth + 1);
+	case TYPEARRAY:
+		if (a->u.array.byvalue != b->u.array.byvalue)
+			return false;
+		al = arraylen(a);
+		bl = arraylen(b);
+		if (!al != !bl || al && !unifysizes(u, al, bl, depth + 1))
+			return false;
+		return unifytypes(u, a->base, a->qual, b->base, b->qual, depth + 1);
+	case TYPEFUNC:
+		if (a->u.func.isvararg != b->u.func.isvararg)
+			return false;
+		if (!unifytypes(u, a->base, a->qual, b->base, b->qual, depth + 1))
+			return false;
+		for (ap = a->u.func.params, bp = b->u.func.params; ap && bp; ap = ap->next, bp = bp->next) {
+			if (!unifytypes(u, ap->type, QUALNONE, bp->type, QUALNONE, depth + 1))
+				return false;
+		}
+		return !ap && !bp;
+	case TYPESTRUCT:
+	case TYPEUNION:
+		tg = a->u.structunion.gen;
+		if (!tg || tg != b->u.structunion.gen)
+			return false;
+		aargs = a->u.structunion.genargs;
+		bargs = b->u.structunion.genargs;
+		for (i = 0; i < tg->nparam; ++i) {
+			switch (tg->params[i].kind) {
+			case GENCONSTNESS:
+				if (aargs[i].qual != bargs[i].qual)
+					return false;
+				break;
+			case GENSIZE:
+				if (!unifysizes(u, aargs[i].size, bargs[i].size, depth + 1))
+					return false;
+				break;
+			case GENTYPE:
+				if (!unifytypes(u, aargs[i].type, aargs[i].qual, bargs[i].type, bargs[i].qual, depth + 1))
+					return false;
+				break;
+			}
+		}
+		return true;
+	}
+	return typecompatible(a, b);
+}
+
+bool
+unify(struct unifier *u, struct type *a, enum typequal aq, struct type *b, enum typequal bq)
+{
+	return unifytypes(u, a, aq, b, bq, 0);
+}
+
+/* arguments for g where parameters not bound in `bind` stand for themselves */
+static struct genarg *
+partialargs(struct generic *g, struct genarg *bind)
+{
+	struct genarg *args;
+	size_t i;
+
+	args = genidentity(g);
+	for (i = 0; i < g->nparam; ++i) {
+		switch (g->params[i].kind) {
+		case GENTYPE:
+			if (bind[i].type)
+				args[i] = bind[i];
+			break;
+		case GENSIZE:
+			if (bind[i].size)
+				args[i] = bind[i];
+			break;
+		case GENCONSTNESS:
+			if (bind[i].constset)
+				args[i] = bind[i];
+			break;
+		}
+	}
+	return args;
+}
+
+/*
+Substitute the bindings made by unification into t, until it no longer
+refers to bound parameters.
+*/
+struct type *
+unifyresolve(struct unifier *u, struct type *t, enum typequal *tq)
+{
+	struct type *old;
+	int k, n;
+
+	for (n = 0; n < 16; ++n) {
+		old = t;
+		for (k = 0; k < 2; ++k) {
+			if (u->g[k] && typehasparam(t, u->g[k]))
+				t = typesubst(t, tq, u->g[k], partialargs(u->g[k], u->bind[k]));
+		}
+		if (t == old)
+			break;
+	}
+	return t;
+}
+
+struct expr *
+unifyresolvesize(struct unifier *u, struct expr *e)
+{
+	struct expr *b;
+	int k, n;
+
+	for (n = 0; n < 16; ++n) {
+		k = unifysizevar(u, e);
+		if (k < 0)
+			break;
+		b = u->bind[k][e->u.sizeparam.index].size;
+		if (!b || unifysizevar(u, b) == k && b->u.sizeparam.index == e->u.sizeparam.index)
+			break;
+		e = b;
+	}
+	return e;
+}
+
+/* number of type constructors and variables in t, for the Paterson conditions */
+size_t
+typecomplexity(struct type *t)
+{
+	struct generic *tg;
+	struct decl *p;
+	size_t n, i;
+
+	n = 1;
+	switch (t->kind) {
+	case TYPEPOINTER:
+	case TYPEARRAY:
+		n += typecomplexity(t->base);
+		break;
+	case TYPEFUNC:
+		n += typecomplexity(t->base);
+		for (p = t->u.func.params; p; p = p->next)
+			n += typecomplexity(p->type);
+		break;
+	case TYPESTRUCT:
+	case TYPEUNION:
+		tg = t->u.structunion.gen;
+		if (!tg)
+			break;
+		for (i = 0; i < tg->nparam; ++i) {
+			if (tg->params[i].kind == GENTYPE)
+				n += typecomplexity(t->u.structunion.genargs[i].type);
+		}
+		break;
+	}
+	return n;
+}
+
+/* number of occurrences of the type parameter `var` in t */
+size_t
+typeoccurs(struct type *t, struct type *var)
+{
+	struct generic *tg;
+	struct decl *p;
+	size_t n, i;
+
+	n = 0;
+	switch (t->kind) {
+	case TYPEPARAM:
+		return t == var;
+	case TYPEPOINTER:
+	case TYPEARRAY:
+		return typeoccurs(t->base, var);
+	case TYPEFUNC:
+		n += typeoccurs(t->base, var);
+		for (p = t->u.func.params; p; p = p->next)
+			n += typeoccurs(p->type, var);
+		break;
+	case TYPESTRUCT:
+	case TYPEUNION:
+		tg = t->u.structunion.gen;
+		if (!tg)
+			break;
+		for (i = 0; i < tg->nparam; ++i) {
+			if (tg->params[i].kind == GENTYPE)
+				n += typeoccurs(t->u.structunion.genargs[i].type, var);
+		}
+		break;
+	}
+	return n;
+}
+
+/* the canonical spelling of a type, for diagnostics */
+char *
+typespelling(struct type *t, enum typequal q)
+{
+	struct array buf = {0};
+
+	typestr(&buf, t, q, "");
 	arrayaddbuf(&buf, "", 1);
 	return buf.val;
 }

@@ -121,9 +121,9 @@ arraysetptr(struct array *a, size_t i, void *v)
 {
 	void *prev, **p, **e;
 
-	if (i >= a->len / sizeof v) {
-		p = arrayadd(a, (i + 1) * sizeof *p - a->len);
-		e = arraylast(a, sizeof *p);
+	if (i >= a->len / sizeof(v)) {
+		p = arrayadd(a, (i + 1) * sizeof(*p) - a->len);
+		e = arraylast(a, sizeof(*p));
 		for (; p != e; ++p)
 			*p = NULL;
 		prev = NULL;

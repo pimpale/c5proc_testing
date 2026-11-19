@@ -287,7 +287,10 @@ convert(struct func *f, struct type *dst, struct type *src, struct value *l)
 
 	if (src == dst)
 		return l;
-	if (src->kind == TYPEPOINTER)
+	/* conversion between slice types, which have the same representation */
+	if (dst->kind == TYPESTRUCT)
+		return l;
+	if (src->kind == TYPEPOINTER || src->kind == TYPENULLPTR)
 		src = &typeulong;
 	if (dst->kind == TYPEPOINTER)
 		dst = &typeulong;
@@ -388,7 +391,8 @@ funcalloc(struct func *f, struct decl *d)
 	assert(!d->type->incomplete);
 	calcvla(f, d->type);
 	end = f->end;
-	if (d->type->size) {
+	if (d->type->size || !(d->type->prop & PROPVM)) {
+		/* objects with a constant size (which may be zero, for an empty C5 array) */
 		f->end = f->start;
 		v = mkintconst(d->type->size);
 	} else {
@@ -397,6 +401,8 @@ funcalloc(struct func *f, struct decl *d)
 		v = d->type->u.array.size;
 	}
 	align = d->u.obj.align;
+	if (!align)
+		align = 1;
 	switch (align) {
 	case 1:
 	case 2:
@@ -524,7 +530,7 @@ mkfunc(struct decl *decl, char *name, struct type *t, struct scope *s)
 	emittype(t->base);
 
 	/* allocate space for parameters */
-	f->paramtemps = xreallocarray(NULL, t->u.func.nparam, sizeof *f->paramtemps);
+	f->paramtemps = xreallocarray(NULL, t->u.func.nparam, sizeof(*f->paramtemps));
 	for (d = t->u.func.params, v = f->paramtemps; d; d = d->next, ++v) {
 		emittype(d->type);
 		functemp(f, v);
@@ -641,7 +647,7 @@ funcsave(struct func *f, struct type *t, struct value *v)
 {
 	struct decl *d;
 
-	if (t->kind != TYPESTRUCT && t->kind != TYPEUNION)
+	if (t->kind != TYPESTRUCT && t->kind != TYPEUNION && t->kind != TYPEARRAY)
 		return v;
 	d = mkdecl(NULL, DECLOBJECT, t, QUALNONE, LINKNONE);
 	d->u.obj.align = t->align;
@@ -691,7 +697,7 @@ funclval(struct func *f, struct expr *e)
 		lval.addr = funcexpr(f, e->base);
 		break;
 	default:
-		if (e->type->kind != TYPESTRUCT && e->type->kind != TYPEUNION)
+		if (e->type->kind != TYPESTRUCT && e->type->kind != TYPEUNION && !(e->type->kind == TYPEARRAY && e->type->u.array.byvalue))
 			error(&tok.loc, "expression is not an object");
 		lval.addr = funcexpr(f, e);
 	}
@@ -772,12 +778,13 @@ funcexpr(struct func *f, struct expr *e)
 		break;
 	case EXPRCONST:
 		t = e->type;
-		if (t->prop & PROPINT || t->kind == TYPEPOINTER)
+		if (t->prop & PROPINT || t->kind == TYPEPOINTER || t->kind == TYPENULLPTR)
 			return mkintconst(e->u.constant.u);
 		assert(t->prop & PROPFLOAT);
 		return mkfltconst(t->size == 4 ? VALUE_FLTCONST : VALUE_DBLCONST, e->u.constant.f);
 	case EXPRBITFIELD:
 	case EXPRCOMPOUND:
+	case EXPRSTRING:
 		lval = funclval(f, e);
 		return funcload(f, e->type, lval);
 	case EXPRINCDEC:
@@ -1205,7 +1212,29 @@ emittype(struct type *t)
 	struct type *sub;
 	unsigned long long off;
 
-	if (t->value || t->kind != TYPESTRUCT && t->kind != TYPEUNION)
+	if (t->value)
+		return;
+	if (t->kind == TYPEARRAY && t->u.array.byvalue) {
+		/* a C5 array is passed and returned like a struct containing it */
+		for (sub = t->base; sub->kind == TYPEARRAY; sub = sub->base)
+			;
+		emittype(sub);
+		t->value = xmalloc(sizeof(*t->value));
+		t->value->kind = VALUE_TYPE;
+		t->value->u.name = "array";
+		t->value->id = ++id;
+		fputs("type ", stdout);
+		emitname(t->value);
+		if (!t->size || !sub->size) {
+			printf(" = align %d { 0 }\n", t->align ? t->align : 1);
+			return;
+		}
+		fputs(" = { ", stdout);
+		emitclass(qbetype(sub).data, sub->value);
+		printf(" %llu }\n", t->size / sub->size);
+		return;
+	}
+	if (t->kind != TYPESTRUCT && t->kind != TYPEUNION)
 		return;
 	t->value = xmalloc(sizeof(*t->value));
 	t->value->kind = VALUE_TYPE;
@@ -1355,7 +1384,9 @@ emitfunc(struct func *f, bool global)
 			v = mkintconst(0);
 		funcret(f, v);
 	}
-	if (global)
+	if (f->decl->comdat)
+		puts("export comdat");
+	else if (global)
 		puts("export");
 	fputs("function ", stdout);
 	if (f->type->base != &typevoid) {
@@ -1477,7 +1508,7 @@ emitdata(struct decl *d, struct init *init)
 	if (d->u.obj.storage == SDTHREAD)
 		fputs("thread ", stdout);
 	if (d->linkage == LINKEXTERN)
-		fputs("export ", stdout);
+		fputs(d->comdat ? "export comdat " : "export ", stdout);
 	fputs("data ", stdout);
 	emitname(d->value);
 	printf(" = align %d { ", align);
@@ -1536,7 +1567,7 @@ emitdata(struct decl *d, struct init *init)
 		++offset;
 	}
 	assert(offset <= d->type->size);
-	if (offset < d->type->size)
+	if (offset < d->type->size || !d->type->size)
 		printf("z %llu ", d->type->size - offset);
 	puts("}");
 }

@@ -35,13 +35,13 @@ parseattr(struct attr *a, enum attrkind allowed, enum attrprefix prefix)
 
 	if (tok.kind < TIDENT)
 		return false;
-	name = strip(tokenstr(tok.kind), namebuf, sizeof namebuf);
+	name = strip(tokenstr(tok.kind), namebuf, sizeof(namebuf));
 	next();
 	if (!prefix) {
 		if (consume(TCOLONCOLON)) {
 			if (strcmp(name, "gnu") == 0)
 				prefix = PREFIXGNU;
-			name = strip(expect(TIDENT, "after attribute prefix"), namebuf, sizeof namebuf);
+			name = strip(expect(TIDENT, "after attribute prefix"), namebuf, sizeof(namebuf));
 		} else {
 			prefix = PREFIXNONE;
 		}

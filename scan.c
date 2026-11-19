@@ -119,6 +119,29 @@ op4(struct scanner *s, int t1, int t2, int t3, int t4)
 	return t4;
 }
 
+static enum tokenkind charconst(struct scanner *);
+static int stringlit(struct scanner *);
+
+/*
+Whether an identifier is an encoding prefix: L, u, U, u8, or for strings
+also n (native encoding), and any of these or nothing after p (no null
+terminator) or c (null terminator).
+*/
+static bool
+isprefix(const unsigned char *p, size_t n, bool string)
+{
+	if (string && n > 0 && (*p == 'p' || *p == 'c')) {
+		++p, --n;
+		if (n == 0)
+			return true;
+	}
+	switch (n) {
+	case 1: return *p == 'L' || *p == 'u' || *p == 'U' || string && *p == 'n';
+	case 2: return p[0] == 'u' && p[1] == '8';
+	}
+	return false;
+}
+
 static int
 ident(struct scanner *s)
 {
@@ -127,6 +150,10 @@ ident(struct scanner *s)
 	s->usebuf = true;
 	while (isalnum(s->chr) || s->chr == '_')
 		nextchar(s);
+	if (s->chr == '"' && isprefix(s->buf.str, s->buf.len, true))
+		return stringlit(s);
+	if (s->chr == '\'' && isprefix(s->buf.str, s->buf.len, false))
+		return charconst(s);
 	tok = tokenget(s->buf.str, s->buf.len);
 	s->usebuf = false;
 	s->buf.len = 0;
@@ -389,18 +416,6 @@ again:
 	case ',':
 		nextchar(s);
 		return TCOMMA;
-	case 'L':
-	case 'U':
-	case 'u':
-		s->usebuf = true;
-		nextchar(s);
-		if (s->buf.str[0] == 'u' && s->chr == '8')
-			nextchar(s);
-		switch (s->chr) {
-		case '\'': return charconst(s);
-		case '"': return stringlit(s);
-		}
-		return ident(s);
 	case EOF:
 		return TEOF;
 	default:

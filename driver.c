@@ -63,6 +63,11 @@ static struct stageinfo stages[] = {
 	[LINK]       = {.name = "link"},
 };
 
+/* config.h from an older configure does not define this */
+#ifndef C5_INCLUDE_DIR
+#define C5_INCLUDE_DIR "/usr/local/lib/cproc/include"
+#endif
+
 static const char *const ignoreflags[] = {
 	"fno-builtin",
 	"pedantic",
@@ -388,6 +393,9 @@ main(int argc, char *argv[])
 	argv0 = progname(argv[0], "cproc");
 
 	arrayaddbuf(&stages[PREPROCESS].cmd, preprocesscmd, sizeof(preprocesscmd));
+	/* headers provided by the compiler, such as c5.h */
+	arrayaddptr(&stages[PREPROCESS].cmd, "-isystem");
+	arrayaddptr(&stages[PREPROCESS].cmd, C5_INCLUDE_DIR);
 	arrayaddptr(&stages[COMPILE].cmd, compilecommand(argv[0]));
 	arrayaddbuf(&stages[CODEGEN].cmd, codegencmd, sizeof(codegencmd));
 	arrayaddbuf(&stages[ASSEMBLE].cmd, assemblecmd, sizeof(assemblecmd));

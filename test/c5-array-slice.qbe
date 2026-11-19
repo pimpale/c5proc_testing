@@ -1,0 +1,268 @@
+type :array.1 = { w 3 }
+export
+function :array.1 $mk(w %.1) {
+@start.1
+	%.2 =l alloc4 4
+	storew %.1, %.2
+	%.3 =l alloc4 12
+@body.2
+	%.4 =w loadw %.2
+	storew %.4, %.3
+	%.5 =l add %.3, 4
+	%.6 =w loadw %.2
+	%.7 =w add %.6, 1
+	storew %.7, %.5
+	%.8 =l add %.3, 8
+	%.9 =w loadw %.2
+	%.10 =w add %.9, 2
+	storew %.10, %.8
+	ret %.3
+}
+type :array.2 = { w 3 }
+export
+function w $sum(:array.2 %.1) {
+@start.3
+@body.4
+	%.2 =l extsw 0
+	%.3 =l mul %.2, 4
+	%.4 =l add %.1, %.3
+	%.5 =w loadw %.4
+	%.6 =w add %.5, 100
+	storew %.6, %.4
+	%.7 =l extsw 0
+	%.8 =l mul %.7, 4
+	%.9 =l add %.1, %.8
+	%.10 =w loadw %.9
+	%.11 =l extsw 1
+	%.12 =l mul %.11, 4
+	%.13 =l add %.1, %.12
+	%.14 =w loadw %.13
+	%.15 =w add %.10, %.14
+	%.16 =l extsw 2
+	%.17 =l mul %.16, 4
+	%.18 =l add %.1, %.17
+	%.19 =w loadw %.18
+	%.20 =w add %.15, %.19
+	ret %.20
+}
+type :slice.3 = { l, l, }
+export
+function w $sums(:slice.3 %.1) {
+@start.5
+	%.2 =l alloc4 4
+	%.3 =l alloc8 8
+@body.6
+	storew 0, %.2
+	%.4 =l extsw 0
+	storel %.4, %.3
+@for_cond.7
+	%.5 =l loadl %.3
+	%.6 =l add %.1, 8
+	%.7 =l loadl %.6
+	%.8 =w cultl %.5, %.7
+	jnz %.8, @for_body.8, @for_join.10
+@for_body.8
+	%.9 =w loadw %.2
+	%.10 =l add %.1, 0
+	%.11 =l loadl %.10
+	%.12 =l loadl %.3
+	%.13 =l mul %.12, 4
+	%.14 =l add %.11, %.13
+	%.15 =w loadw %.14
+	%.16 =w add %.9, %.15
+	storew %.16, %.2
+@for_cont.9
+	%.17 =l loadl %.3
+	%.18 =l add %.17, 1
+	storel %.18, %.3
+	jmp @for_cond.7
+@for_join.10
+	%.19 =w loadw %.2
+	ret %.19
+}
+data $.Lstring.4 = align 1 { b "hello", }
+export data $gs = align 8 { l $.Lstring.4 + 1, l 3, }
+data $.Lstring.6 = align 1 { b "%d %d %d %d\012\000", }
+type :array.4 = { w 3 }
+data $.Lstring.7 = align 1 { b "%d %d %d\012\000", }
+data $.Lstring.8 = align 1 { b "%lu %lu %d %d\012\000", }
+data $.Lstring.9 = align 1 { b "%lu %c%c%c\012\000", }
+data $.Lstring.10 = align 1 { b "%d %lu %lu\012\000", }
+data $.Lstring.11 = align 1 { b "%c%c\012\000", }
+export
+function w $main() {
+@start.11
+	%.1 =l alloc4 12
+	%.10 =l alloc4 12
+	%.35 =l alloc8 16
+	%.38 =l alloc8 16
+	%.44 =l alloc8 16
+	%.50 =l alloc8 16
+	%.57 =l alloc8 16
+	%.58 =l alloc8 16
+	%.112 =l alloc4 12
+	%.126 =l alloc8 8
+	%.133 =l alloc4 2
+@body.12
+	%.2 =:array.1 call extern $mk(w 1)
+	%.3 =w loadw %.2
+	storew %.3, %.1
+	%.4 =l add %.2, 4
+	%.5 =l add %.1, 4
+	%.6 =w loadw %.4
+	storew %.6, %.5
+	%.7 =l add %.4, 4
+	%.8 =l add %.5, 4
+	%.9 =w loadw %.7
+	storew %.9, %.8
+	%.11 =w loadw %.1
+	storew %.11, %.10
+	%.12 =l add %.1, 4
+	%.13 =l add %.10, 4
+	%.14 =w loadw %.12
+	storew %.14, %.13
+	%.15 =l add %.12, 4
+	%.16 =l add %.13, 4
+	%.17 =w loadw %.15
+	storew %.17, %.16
+	%.18 =l extsw 1
+	%.19 =l mul %.18, 4
+	%.20 =l add %.10, %.19
+	storew 50, %.20
+	%.21 =l extsw 1
+	%.22 =l mul %.21, 4
+	%.23 =l add %.1, %.22
+	%.24 =w loadw %.23
+	%.25 =l extsw 1
+	%.26 =l mul %.25, 4
+	%.27 =l add %.10, %.26
+	%.28 =w loadw %.27
+	%.29 =w call extern $sum(:array.4 %.1)
+	%.30 =l extsw 0
+	%.31 =l mul %.30, 4
+	%.32 =l add %.1, %.31
+	%.33 =w loadw %.32
+	%.34 =w call extern $printf(l $.Lstring.6, ..., w %.24, w %.28, w %.29, w %.33)
+	storel %.1, %.35
+	%.36 =l add %.35, 8
+	storel 3, %.36
+	%.37 =w call extern $sums(:slice.3 %.35)
+	%.39 =l mul 1, 4
+	%.40 =l add %.10, %.39
+	storel %.40, %.38
+	%.41 =l add %.38, 8
+	%.42 =l sub 3, 1
+	storel %.42, %.41
+	%.43 =w call extern $sums(:slice.3 %.38)
+	storel %.1, %.44
+	%.45 =l add %.44, 8
+	%.46 =l extsw 1
+	%.47 =l add %.46, 1
+	storel %.47, %.45
+	%.48 =w call extern $sums(:slice.3 %.44)
+	%.49 =w call extern $printf(l $.Lstring.7, ..., w %.37, w %.43, w %.48)
+	%.51 =l mul 0, 4
+	%.52 =l add %.1, %.51
+	storel %.52, %.50
+	%.53 =l add %.50, 8
+	%.54 =l extsw 2
+	%.55 =l add %.54, 1
+	%.56 =l sub %.55, 0
+	storel %.56, %.53
+	%.59 =l add %.50, 0
+	%.60 =l loadl %.59
+	%.61 =l mul 1, 4
+	%.62 =l add %.60, %.61
+	storel %.62, %.58
+	%.63 =l add %.58, 8
+	%.64 =l add %.50, 8
+	%.65 =l loadl %.64
+	%.66 =l sub %.65, 1
+	storel %.66, %.63
+	%.67 =l loadl %.58
+	storel %.67, %.57
+	%.68 =l add %.58, 8
+	%.69 =l add %.57, 8
+	%.70 =l loadl %.68
+	storel %.70, %.69
+	%.71 =l add %.50, 8
+	%.72 =l loadl %.71
+	%.73 =l add %.57, 8
+	%.74 =l loadl %.73
+	%.75 =l add %.57, 0
+	%.76 =l loadl %.75
+	%.77 =l extsw 0
+	%.78 =l mul %.77, 4
+	%.79 =l add %.76, %.78
+	%.80 =w loadw %.79
+	%.81 =l add %.57, 0
+	%.82 =l loadl %.81
+	%.83 =l extsw 1
+	%.84 =l mul %.83, 4
+	%.85 =l add %.82, %.84
+	%.86 =w loadw %.85
+	%.87 =w call extern $printf(l $.Lstring.8, ..., l %.72, l %.74, w %.80, w %.86)
+	%.88 =l add extern $gs, 8
+	%.89 =l loadl %.88
+	%.90 =l add extern $gs, 0
+	%.91 =l loadl %.90
+	%.92 =l extsw 0
+	%.93 =l mul %.92, 1
+	%.94 =l add %.91, %.93
+	%.95 =w loadub %.94
+	%.96 =w extub %.95
+	%.97 =l add extern $gs, 0
+	%.98 =l loadl %.97
+	%.99 =l extsw 1
+	%.100 =l mul %.99, 1
+	%.101 =l add %.98, %.100
+	%.102 =w loadub %.101
+	%.103 =w extub %.102
+	%.104 =l add extern $gs, 0
+	%.105 =l loadl %.104
+	%.106 =l extsw 2
+	%.107 =l mul %.106, 1
+	%.108 =l add %.105, %.107
+	%.109 =w loadub %.108
+	%.110 =w extub %.109
+	%.111 =w call extern $printf(l $.Lstring.9, ..., l %.89, w %.96, w %.103, w %.110)
+	%.113 =:array.1 call extern $mk(w 7)
+	%.114 =w loadw %.113
+	storew %.114, %.112
+	%.115 =l add %.113, 4
+	%.116 =l add %.112, 4
+	%.117 =w loadw %.115
+	storew %.117, %.116
+	%.118 =l add %.115, 4
+	%.119 =l add %.116, 4
+	%.120 =w loadw %.118
+	storew %.120, %.119
+	%.121 =l extsw 2
+	%.122 =l mul %.121, 4
+	%.123 =l add %.112, %.122
+	%.124 =w loadw %.123
+	%.125 =w call extern $printf(l $.Lstring.10, ..., w %.124, l 12, l 3)
+	storel %.1, %.126
+	%.127 =l loadl %.126
+	%.128 =l extsw 2
+	%.129 =l mul %.128, 4
+	%.130 =l add %.127, %.129
+	%.131 =w loadw %.130
+	%.132 =w call extern $printf(l $.Lstring.10, ..., w %.131, l 4, l 0)
+	%.134 =l add %.133, 0
+	storeb 104, %.134
+	%.135 =l add %.133, 1
+	storeb 105, %.135
+	%.136 =l extsw 0
+	%.137 =l mul %.136, 1
+	%.138 =l add %.133, %.137
+	%.139 =w loadub %.138
+	%.140 =w extub %.139
+	%.141 =l extsw 1
+	%.142 =l mul %.141, 1
+	%.143 =l add %.133, %.142
+	%.144 =w loadub %.143
+	%.145 =w extub %.144
+	%.146 =w call extern $printf(l $.Lstring.11, ..., w %.140, w %.145)
+	ret 0
+}

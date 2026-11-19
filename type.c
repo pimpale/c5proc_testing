@@ -161,6 +161,22 @@ typecompatible(struct type *t1, struct type *t2)
 	case TYPEPOINTER:
 		goto derived;
 	case TYPEARRAY:
+		if (t1->u.array.byvalue != t2->u.array.byvalue)
+			return false;
+		if (t1->u.array.byvalue) {
+			/* the length of a C5 array is always known, though it may depend on forall parameters */
+			e1 = t1->u.array.length;
+			e2 = t2->u.array.length;
+			if (e1 && e2) {
+				if (!sizesame(e1, e2))
+					return false;
+			} else if ((t1->prop | t2->prop) & PROPDEPLEN) {
+				return false;
+			} else if (!typedep(t1->base) && !typedep(t2->base) && t1->size != t2->size) {
+				return false;
+			}
+			goto derived;
+		}
 		if (t1->incomplete || t2->incomplete)
 			goto derived;
 		e1 = t1->u.array.length;
@@ -260,6 +276,9 @@ typeadjust(struct type *t, enum typequal *tq)
 
 	switch (t->kind) {
 	case TYPEARRAY:
+		/* C5 arrays are passed by value */
+		if (t->u.array.byvalue)
+			break;
 		ptrqual = t->u.array.ptrqual;
 		t = mkpointertype(t->base, *tq | t->qual);
 		*tq = ptrqual;

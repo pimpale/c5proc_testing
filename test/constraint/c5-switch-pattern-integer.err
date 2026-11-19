@@ -1,0 +1,1 @@
+error: 'case' label with a pattern must be in a switch on a struct or union

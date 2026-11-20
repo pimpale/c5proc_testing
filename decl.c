@@ -705,7 +705,7 @@ declspecs(struct scope *s, enum storageclass *sc, enum funcspec *fs, int *align)
 				goto done;
 			d = scopegetdecl(s, tokenstr(tok.kind), 1);
 			if (!d || d->kind != DECLTYPE) {
-				other = c5file(tok.loc.file) ? tagtype(s, tokenstr(tok.kind)) : NULL;
+				other = tok.c5 ? tagtype(s, tokenstr(tok.kind)) : NULL;
 				if (!other)
 					goto done;
 				t = other;
@@ -806,7 +806,7 @@ istypename(struct scope *s, const char *name)
 	d = scopegetdecl(s, name, 1);
 	if (d)
 		return d->kind == DECLTYPE;
-	return c5file(tok.loc.file) && tagtype(s, name);
+	return tok.c5 && tagtype(s, name);
 }
 
 /* whether the current token starts a type name */
@@ -939,7 +939,7 @@ declaratortypes(struct scope *s, struct list *result, char **name, int *align, s
 		case TLBRACK:  /* array declarator */
 			if (allowedattr != -1 && attr(&a, allowedattr))
 				goto attr;
-			if (c5file(tok.loc.file))
+			if (tok.c5)
 				error(&tok.loc, "C arrays are not allowed in C5 files; use array<T, N>");
 			next();
 			t = mkarraytype(NULL, QUALNONE, 0);

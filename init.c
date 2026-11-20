@@ -16,7 +16,15 @@ struct object {
 	unsigned long long elem;
 	/* for a struct with existential parameters, their arguments, determined by the initializers */
 	struct genarg *exbind;
+	/* for each existential parameter, the member whose initializer determined it */
+	struct exsrc *exsrc;
 	bool iscur;
+};
+
+struct exsrc {
+	struct member *mem;
+	/* type of the initializer of the member */
+	struct type *type;
 };
 
 struct initparser {
@@ -186,6 +194,7 @@ subobj(struct initparser *p, struct type *t, unsigned long long off)
 	p->sub->offset = off;
 	p->sub->iscur = false;
 	p->sub->exbind = exbind(t);
+	p->sub->exsrc = NULL;
 }
 
 /* arguments to be determined for the existential parameters of t, if any */
@@ -208,12 +217,68 @@ The type of an initializer for a member that mentions existential
 parameters of its struct, which binds them. All initializers of the
 struct must agree.
 */
+static bool
+exbound(struct genarg *a)
+{
+	return a->type || a->size || a->constset;
+}
+
+/*
+Report an initializer of type `at` for the member of o with type t,
+which contradicts the arguments in `bind` determined by the earlier
+initializers.
+*/
+static void
+exconflict(struct object *o, struct genarg *bind, struct type *t, struct type *at)
+{
+	struct generic *ex;
+	struct genarg *one;
+	struct exsrc *src;
+	const char *kind, *name, *mem;
+	size_t i;
+
+	ex = o->type->u.structunion.exists;
+	kind = o->type->kind == TYPESTRUCT ? "struct" : "union";
+	name = ex->name ? ex->name : "<anonymous>";
+	mem = o->u.mem->name ? o->u.mem->name : "<anonymous>";
+	/* find an argument which the initializer contradicts by itself */
+	one = xreallocarray(NULL, ex->nparam, sizeof(*one));
+	for (i = 0; i < ex->nparam; ++i) {
+		src = &o->exsrc[i];
+		if (!src->mem || !exbound(&bind[i]))
+			continue;
+		memset(one, 0, ex->nparam * sizeof(*one));
+		one[i] = bind[i];
+		if (genunify(ex, one, t, QUALNONE, at, QUALNONE))
+			continue;
+		if (bind[i].type) {
+			error(&tok.loc, "member '%s' of type '%s' is initialized with a value of type '%s', but member '%s', initialized with a value of type '%s', determined existential parameter '%s' of %s '%s' to be '%s'",
+				mem, typespelling(t, QUALNONE), typespelling(at, QUALNONE),
+				src->mem->name ? src->mem->name : "<anonymous>", typespelling(src->type, QUALNONE),
+				ex->params[i].name, kind, name, typespelling(bind[i].type, bind[i].qual));
+		}
+		error(&tok.loc, "member '%s' of type '%s' is initialized with a value of type '%s', which is inconsistent with existential parameter '%s' of %s '%s' as determined by member '%s', initialized with a value of type '%s'",
+			mem, typespelling(t, QUALNONE), typespelling(at, QUALNONE),
+			ex->params[i].name, kind, name,
+			src->mem->name ? src->mem->name : "<anonymous>", typespelling(src->type, QUALNONE));
+	}
+	error(&tok.loc, "member '%s' of type '%s' is initialized with a value of type '%s', which is inconsistent with the existential parameters of %s '%s'",
+		mem, typespelling(t, QUALNONE), typespelling(at, QUALNONE), kind, name);
+}
+
+/*
+The type of an initializer for a member that mentions existential
+parameters of its struct, which binds them. All initializers of the
+struct must agree.
+*/
 static struct type *
 exmember(struct initparser *p, struct type *t, struct expr *e)
 {
 	struct object *o;
 	struct generic *ex;
+	struct genarg *old;
 	enum typequal q;
+	size_t i;
 
 	if (p->sub == p->obj)
 		return t;
@@ -223,8 +288,22 @@ exmember(struct initparser *p, struct type *t, struct expr *e)
 	ex = o->type->u.structunion.exists;
 	if (!typehasparam(t, ex))
 		return t;
+	if (!o->exsrc) {
+		o->exsrc = xreallocarray(NULL, ex->nparam, sizeof(*o->exsrc));
+		memset(o->exsrc, 0, ex->nparam * sizeof(*o->exsrc));
+	}
+	/* a failed unification may leave partial bindings behind */
+	old = xreallocarray(NULL, ex->nparam, sizeof(*old));
+	memcpy(old, o->exbind, ex->nparam * sizeof(*old));
 	if (!genunify(ex, o->exbind, t, QUALNONE, e->type, QUALNONE))
-		error(&tok.loc, "initializer is inconsistent with the existential parameters of %s '%s'", o->type->kind == TYPESTRUCT ? "struct" : "union", ex->name ? ex->name : "<anonymous>");
+		exconflict(o, old, t, e->type);
+	for (i = 0; i < ex->nparam; ++i) {
+		if (!exbound(&old[i]) && exbound(&o->exbind[i])) {
+			o->exsrc[i].mem = o->u.mem;
+			o->exsrc[i].type = e->type;
+		}
+	}
+	free(old);
 	q = QUALNONE;
 	return typesubst(t, &q, ex, o->exbind);
 }
@@ -369,6 +448,7 @@ parseinit(struct scope *s, struct type *t)
 	struct type *base;
 	struct bitfield bits;
 	struct init *new;
+	struct location loc;
 
 	p.cur = NULL;
 	p.sub = p.obj;
@@ -376,6 +456,7 @@ parseinit(struct scope *s, struct type *t)
 	p.sub->type = t;
 	p.sub->iscur = false;
 	p.sub->exbind = exbind(t);
+	p.sub->exsrc = NULL;
 	p.init = NULL;
 	p.last = &p.init;
 	p.dep = typedep(t);
@@ -415,6 +496,7 @@ parseinit(struct scope *s, struct type *t)
 		/* the type of the whole initializer is used to infer type arguments */
 		if (!p.cur)
 			exprexpect(t);
+		loc = tok.loc;
 		expr = assignexpr(s);
 		for (;;) {
 			t = p.sub->type;
@@ -462,6 +544,12 @@ parseinit(struct scope *s, struct type *t)
 				expr = exprassign(expr, exmember(&p, t, expr));
 				goto add;
 			}
+			/*
+			Only within braces may an initializer be for the
+			first subobject of an aggregate or union.
+			*/
+			if (!p.cur)
+				error(&loc, "initializer for %s must be brace-enclosed or have compatible type", typeisslice(t) ? "slice" : t->kind == TYPEARRAY ? "array" : "struct or union");
 			focus(&p);
 		}
 	add:

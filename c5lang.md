@@ -731,6 +731,11 @@ Different files have different requirements for classical C compatibility. There
 In reality, both are slightly incompatible with C. But the former is far more compatible.
 Mode applies per file. When the file being parsed or included ends in .c or .h, it is parsed in C compatible mode. If it ends in .c5 or .h5 it is parsed in C incompatible mode.
 
+One important note is that macro definitions expand with the mode where they were defined. That is, if I define a macro in a regular .h file and include it inside a .c5 file, the expanded code uses C-compatible mode.
+The same applies to a .h5 file being included in a .c file. The macro argument has the mode at the call site.
+The results of `#` and `##` have the mode of the file where the macro using them is defined. 
+This facilitates source-level compatibility between c5 and c.
+
 ### C5 C-Incompatible Mode
 
 In idiomatic C5, the following are banned:
@@ -757,7 +762,6 @@ There are also contextual keywords:
     * constness
 * As the argument for a constness parameter
     * mut
-
 
 ### C5 C-Compatible Mode
 

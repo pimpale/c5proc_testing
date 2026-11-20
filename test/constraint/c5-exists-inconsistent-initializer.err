@@ -1,1 +1,1 @@
-error: initializer is inconsistent with the existential parameters of struct 'A'
+error: member 'use' of type 'void(*)(D*)' is initialized with a value of type 'void(*)(Y*)', but member 'data', initialized with a value of type 'X*', determined existential parameter 'D' of struct 'A' to be 'X'

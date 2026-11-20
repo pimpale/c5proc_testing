@@ -156,12 +156,14 @@ spawn(pid_t *pid, struct array *args, posix_spawn_file_actions_t *actions)
 }
 
 static int
-spawnphase(struct stageinfo *phase, int *fd, char *input, char *output, bool last)
+spawnphase(struct stageinfo *phase, int *fd, char *input, char *output, bool last, char *extra)
 {
 	int ret, pipefd[2];
 	posix_spawn_file_actions_t actions;
 
 	phase->cmd.len = phase->cmdbase;
+	if (extra)
+		arrayaddptr(&phase->cmd, extra);
 	if (last && output) {
 		arrayaddptr(&phase->cmd, "-o");
 		arrayaddptr(&phase->cmd, output);
@@ -237,6 +239,7 @@ buildobj(struct input *input, char *output)
 	pid_t pid;
 	int status, ret, fd;
 	bool success = true;
+	char *extra;
 
 	if (input->filetype == OBJ)
 		return;
@@ -267,7 +270,14 @@ buildobj(struct input *input, char *output)
 		if (!(input->stages & 1<<i))
 			continue;
 		input->stages &= ~(1<<i);
-		ret = spawnphase(&stages[i], &fd, input->name, output, !input->stages);
+		/*
+		The compiler expands macros itself, so that it knows which
+		file each token of an expansion was written in. When the
+		preprocessor output is the result, or is for the assembler,
+		the preprocessor must expand them.
+		*/
+		extra = i == PREPROCESS && input->stages & 1<<COMPILE ? "-fdirectives-only" : NULL;
+		ret = spawnphase(&stages[i], &fd, input->name, output, !input->stages, extra);
 		if (ret) {
 			warn("%s: spawn \"%s\": %s", stages[i].name, *(char **)stages[i].cmd.val, strerror(ret));
 			goto kill;

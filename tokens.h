@@ -142,6 +142,13 @@ TOKEN(TPRAGMA,        "pragma")
 TOKEN(TUNDEF,         "undef")
 TOKEN(TWARNING,       "warning")
 TOKEN(T__VA_ARGS__,   "__VA_ARGS__")
+TOKEN(T__VA_OPT__,    "__VA_OPT__")
+TOKEN(T__FILE__,      "__FILE__")
+TOKEN(T__LINE__,      "__LINE__")
+TOKEN(T__COUNTER__,   "__COUNTER__")
+TOKEN(T__DATE__,      "__DATE__")
+TOKEN(T__TIME__,      "__TIME__")
+TOKEN(T_PRAGMAOP,     "_Pragma")
 
 /* keywords in C5 files (see c5keyword in pp.c) */
 TOKEN(C5_ARRAY,       "array")

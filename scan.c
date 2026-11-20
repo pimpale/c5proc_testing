@@ -463,6 +463,13 @@ scanopen(void)
 void
 scansetloc(struct location loc)
 {
+	/*
+	loc is for the next line, whose first character was already
+	read. If that line is empty, the character is its newline,
+	which is located at the start of the following line.
+	*/
+	if (scanner->chr == '\n')
+		++loc.line, loc.col = 0;
 	scanner->loc = loc;
 }
 
@@ -494,4 +501,35 @@ scan(struct token *t)
 	}
 	t->space = scanner->sawspace;
 	t->hide = false;
+	t->c5 = c5file(t->loc.file);
+}
+
+/*
+Scan a string consisting of a single token, as needed for the '##'
+operator. Errors are reported at the location in t. Returns false if
+the string is not exactly one token.
+*/
+bool
+scanstring(const char *str, struct token *t)
+{
+	struct scanner s = {0};
+	struct location loc;
+	bool single;
+
+	s.file = fmemopen((char *)str, strlen(str), "r");
+	if (!s.file)
+		fatal("fmemopen:");
+	s.loc = t->loc;
+	nextchar(&s);
+	t->kind = scankind(&s, &loc);
+	single = t->kind != TEOF && s.chr == EOF;
+	if (s.usebuf)
+		t->lit = bufget(&s.buf);
+	else
+		t->lit = NULL;
+	t->space = false;
+	t->hide = false;
+	fclose(s.file);
+	free(s.buf.str);
+	return single;
 }

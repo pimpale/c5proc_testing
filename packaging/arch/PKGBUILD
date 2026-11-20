@@ -9,7 +9,7 @@
 # conflict with the qbe package.
 
 pkgname=c5proc
-pkgver=r26.c5d98a9
+pkgver=r27.6ee3792
 pkgrel=1
 pkgdesc='C5 compiler (cproc with structured polymorphism), using a QBE fork with COMDAT support'
 arch=('x86_64')

@@ -1,0 +1,36 @@
+data $.Lstring.2 = align 1 { b "hi\000", }
+data $.Lstring.3 = align 1 { b "a\000", }
+export
+function w $f() {
+@start.1
+	%.1 =l alloc4 4
+	%.5 =l alloc4 2
+	%.8 =l alloc4 2
+	%.11 =l alloc4 4
+@body.2
+	storew 0, %.1
+	%.2 =w call extern $puts(l $.Lstring.2)
+	%.3 =w call extern $puts(l $.Lstring.3)
+	%.4 =w call extern $puts(l $.Lstring.2)
+	%.6 =l add %.5, 0
+	storeb 104, %.6
+	%.7 =l add %.5, 1
+	storeb 105, %.7
+	%.9 =l add %.8, 0
+	storeb 104, %.9
+	%.10 =l add %.8, 1
+	storeb 105, %.10
+	%.12 =l add %.11, 0
+	storeb 104, %.12
+	%.13 =l add %.11, 1
+	storeb 105, %.13
+	%.14 =l add %.11, 2
+	storeb 104, %.14
+	%.15 =l add %.11, 3
+	storeb 105, %.15
+	%.16 =l extsw 1
+	%.17 =l add 4, %.16
+	%.18 =l add %.17, 2
+	%.19 =l add %.18, 3
+	ret %.19
+}

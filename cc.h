@@ -26,6 +26,13 @@ struct token {
 	bool hide;
 	/* whether or not the token was preceeded by a space */
 	bool space;
+	/*
+	whether the token was written in a C5 file (C-incompatible mode).
+	For a token from a macro expansion, this is the file of the macro
+	definition (or, for a macro argument, of the invocation), while
+	loc is where the outermost macro was invoked.
+	*/
+	bool c5;
 	struct location loc;
 	char *lit;
 };
@@ -435,6 +442,7 @@ void scanfrom(const char *, FILE *);
 void scanopen(void);
 void scansetloc(struct location loc);
 void scan(struct token *);
+bool scanstring(const char *, struct token *);
 
 /* preprocessor */
 

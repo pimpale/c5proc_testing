@@ -59,6 +59,10 @@ At runtime, you will need QBE, an assembler, and a linker for the
 target system. Since the preprocessor is not fully implemented, an
 external one is currently required as well.
 
+* C5 Addition: The external preprocessor handles `#include` and conditional directives, and must support GNU cpp's
+`-fdirectives-only` option, since the compiler expands macros itself
+in order to know which file each token of an expansion was written in.
+
 ## Supported targets
 
 All architectures supported by QBE should work (currently x86\_64,

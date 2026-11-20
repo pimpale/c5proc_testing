@@ -1,0 +1,31 @@
+/*
+A macro keeps the mode of the file it is defined in, and a macro
+argument that of the file it is written in. The line markers stand
+for an included C header.
+*/
+# 1 "c5-macro-mode.h"
+#define MSG "hi"
+#define SIZE(x) sizeof x
+#define PICK(x) _Generic(x, int: 1, default: 2)
+#define STR(x) #x
+#define ID(x) x
+#define CAT(a, b) a ## b
+struct array { int slice; };
+# 15 "c5-macro-mode.c5"
+#define LOCAL "hi"
+
+int puts(const char *);
+
+int f(void) {
+	int a = 0;
+
+	/* null-terminated strings in the native encoding */
+	puts(MSG);
+	puts(STR(a));
+	puts(CAT(MS, G));
+	/* UTF-8 strings with no terminator */
+	array<unsigned char, 2> x = LOCAL;
+	array<unsigned char, 2> y = ID("hi");
+	array<unsigned char, 4> z = ID(LOCAL) MSG;
+	return SIZE(a) + PICK(a) + sizeof(x) + sizeof(MSG);
+}

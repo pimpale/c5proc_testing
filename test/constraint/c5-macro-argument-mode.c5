@@ -1,0 +1,5 @@
+#define ID(x) x
+# 1 "x.h"
+#define HDR(x) x
+# 3 "c5-macro-argument-mode.c5"
+int x = HDR(_Generic(0, int: 1));

@@ -697,7 +697,7 @@ stringconcat(struct stringlit *str, bool forceutf8)
 	len = 0;
 	kind = 0;
 	term = 0;
-	c5 = c5file(tok.loc.file);
+	c5 = tok.c5;
 	do {
 		src = tok.lit;
 		/* p: no null terminator (Pascal style), c: null terminator (C style) */
@@ -879,7 +879,7 @@ primaryexpr(struct scope *s)
 	}
 	switch (tok.kind) {
 	case TSTRINGLIT:
-		c5 = c5file(tok.loc.file);
+		c5 = tok.c5;
 		e = mkexpr(EXPRSTRING, NULL, NULL);
 		t = stringconcat(&e->u.string, false);
 		e->type = mkarraytype(t, QUALNONE, e->u.string.size);
@@ -968,7 +968,7 @@ primaryexpr(struct scope *s)
 		expect(TRPAREN, "after expression");
 		break;
 	case T_GENERIC:
-		if (c5file(tok.loc.file))
+		if (tok.c5)
 			error(&tok.loc, "_Generic is not allowed in C5 files");
 		e = generic(s);
 		break;
@@ -2016,7 +2016,7 @@ unaryexpr(struct scope *s)
 	case TALIGNOF:
 	case T__ALIGNOF__:
 		/* in C5 files, sizeof requires parentheses */
-		c5 = c5file(tok.loc.file);
+		c5 = tok.c5;
 		next();
 		if (consume(TLPAREN)) {
 			t = typename(s, NULL, NULL);

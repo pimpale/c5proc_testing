@@ -128,6 +128,9 @@ struct type {
 		struct {
 			bool issigned, iscomplex;
 			int width;
+			/* for enum types, whether the underlying type is fixed, and the enumerators */
+			bool isfixed;
+			struct decl *consts;
 		} arith;
 		struct {
 			struct expr *length;

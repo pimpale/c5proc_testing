@@ -245,6 +245,98 @@ builtingeneric(struct scope *s, enum tokenkind kind)
 }
 
 static struct type *
+mktagtype(enum typekind kind, char *tag, struct type *et)
+{
+	struct type *t;
+
+	if (kind == TYPEENUM) {
+		t = mktype(kind, PROPSCALAR|PROPARITH|PROPREAL|PROPINT);
+		t->base = et;
+		t->u.arith.isfixed = et != NULL;
+	} else {
+		t = mktype(kind, 0);
+		t->u.structunion.tag = tag;
+	}
+	t->incomplete = true;
+
+	return t;
+}
+
+/* stricter than typecompatible: whether two types are the same type */
+static bool
+typeidentical(struct type *t1, struct type *t2)
+{
+	struct decl *p1, *p2;
+
+	if (t1 == t2)
+		return true;
+	if (t1->kind != t2->kind || !typecompatible(t1, t2))
+		return false;
+	switch (t1->kind) {
+	case TYPEARRAY:
+		if (t1->incomplete != t2->incomplete || t1->size != t2->size)
+			return false;
+		break;
+	case TYPEFUNC:
+		for (p1 = t1->u.func.params, p2 = t2->u.func.params; p1 && p2; p1 = p1->next, p2 = p2->next) {
+			if (!typeidentical(p1->type, p2->type))
+				return false;
+		}
+		break;
+	}
+	return !t1->base || typeidentical(t1->base, t2->base);
+}
+
+/*
+C23 6.7.3.4p1: whether two definitions of a tag in the same scope
+have the same content, so that the second is a valid redefinition.
+*/
+static bool
+tagsame(struct type *t1, struct type *t2)
+{
+	struct member *m1, *m2;
+	struct decl *d1, *d2, *d;
+
+	if (t1->kind == TYPEENUM) {
+		if (t1->base != t2->base || t1->u.arith.isfixed != t2->u.arith.isfixed)
+			return false;
+		/* enumerators may be in any order, but are usually in the same one */
+		for (d1 = t1->u.arith.consts, d2 = t2->u.arith.consts; d1 && d2; d1 = d1->next, d2 = d2->next) {
+			d = d2;
+			if (strcmp(d1->name, d->name) != 0) {
+				for (d = t2->u.arith.consts; d && strcmp(d1->name, d->name) != 0; d = d->next)
+					;
+			}
+			if (!d || d1->u.enumconst != d->u.enumconst)
+				return false;
+		}
+		return !d1 && !d2;
+	}
+	if (t1->size != t2->size || t1->align != t2->align)
+		return false;
+	if (t1->u.structunion.packed != t2->u.structunion.packed || (t1->prop ^ t2->prop) & PROPFLEX)
+		return false;
+	for (m1 = t1->u.structunion.members, m2 = t2->u.structunion.members; m1 && m2; m1 = m1->next, m2 = m2->next) {
+		if (!m1->name != !m2->name || m1->name && strcmp(m1->name, m2->name) != 0)
+			return false;
+		if (m1->qual != m2->qual || m1->offset != m2->offset)
+			return false;
+		if (m1->bits.before != m2->bits.before || m1->bits.after != m2->bits.after)
+			return false;
+		t1 = m1->type;
+		t2 = m2->type;
+		if (!m1->name && t1->kind == t2->kind && !t1->u.structunion.tag && !t2->u.structunion.tag) {
+			/* anonymous structs and unions are compared by content */
+			if (!tagsame(t1, t2))
+				return false;
+		} else if (!typeidentical(t1, t2)) {
+			return false;
+		}
+	}
+	return !m1 && !m2;
+}
+
+static struct type *
 tagspec(struct scope *s)
 {
 	static struct type *const inttypes[][2] = {
@@ -252,7 +344,7 @@ tagspec(struct scope *s)
 		{&typeulong, &typelong},
 		{&typeullong, &typellong},
 	};
-	struct type *t, *et;
+	struct type *t, *et, *old;
 	char *tag, *name;
 	enum typekind kind;
 	struct decl *d, *enumconsts;
@@ -316,34 +408,34 @@ tagspec(struct scope *s)
 				error(&tok.loc, "%s '%s' requires type arguments", kind == TYPESTRUCT ? "struct" : "union", tag);
 		}
 	} else {
-		if (kind == TYPEENUM) {
-			t = mktype(kind, PROPSCALAR|PROPARITH|PROPREAL|PROPINT);
-			t->base = et;
-		} else {
-			t = mktype(kind, 0);
-			t->size = 0;
-			t->align = 0;
-			t->u.structunion.tag = tag;
-			t->u.structunion.members = NULL;
-			if (gen) {
-				gen->pattern = t;
-				gen->name = tag;
-				t->u.structunion.gen = gen;
-				t->u.structunion.genargs = genidentity(gen);
-			}
-			if (ex) {
-				ex->name = tag;
-				t->u.structunion.exists = ex;
-			}
+		t = mktagtype(kind, tag, et);
+		if (gen) {
+			gen->pattern = t;
+			gen->name = tag;
+			t->u.structunion.gen = gen;
+			t->u.structunion.genargs = genidentity(gen);
 		}
-		t->incomplete = true;
+		if (ex) {
+			ex->name = tag;
+			t->u.structunion.exists = ex;
+		}
 		if (tag)
 			scopeputtag(ts, tag, t);
 	}
 	if (tok.kind != TLBRACE)
 		return t;
-	if (!t->incomplete)
-		error(&tok.loc, "redefinition of tag '%s'", tag);
+	old = NULL;
+	if (!t->incomplete) {
+		/*
+		A tag may be redefined in the same scope if the content
+		is the same (C23 6.7.3.4p1), so parse the definition as
+		a new type to compare with the existing one.
+		*/
+		if (kind != TYPEENUM && (t->u.structunion.gen || t->u.structunion.exists))
+			error(&tok.loc, "redefinition of tag '%s'", tag);
+		old = t;
+		t = mktagtype(kind, tag, et);
+	}
 	next();
 	switch (t->kind) {
 	case TYPESTRUCT:
@@ -389,7 +481,7 @@ tagspec(struct scope *s)
 					et = typehasint(&typeint, value, e->type->u.arith.issigned) ? &typeint : e->type;
 				else if (!typehasint(et, value, e->type->u.arith.issigned))
 					goto invalid;
-			} else if (value == 0 && !et->u.arith.issigned || value == 1ull << 63 && et->u.arith.issigned) {
+			} else if (value == 0 && !et->u.arith.issigned && enumconsts || value == 1ull << 63 && et->u.arith.issigned) {
 				error(&tok.loc, "no %ssigned integer type can represent enumerator value", et->u.arith.issigned ? "" : "un");
 			} else if (!typehasint(et, value, et->u.arith.issigned)) {
 				if (t->base) {
@@ -442,8 +534,19 @@ tagspec(struct scope *s)
 			t->u.arith.issigned = t->base->u.arith.issigned;
 			t->u.arith.width = t->base->u.arith.width;
 		}
+		t->u.arith.consts = enumconsts;
 	}
 	t->incomplete = false;
+	if (old) {
+		if (!tagsame(old, t))
+			error(&tok.loc, "redefinition of tag '%s' with different content", tag);
+		/* the enumerators keep their original declarations */
+		if (kind == TYPEENUM) {
+			for (d = old->u.arith.consts; d; d = d->next)
+				scopeputdecl(s, d);
+		}
+		t = old;
+	}
 
 	return t;
 }

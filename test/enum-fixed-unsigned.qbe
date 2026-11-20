@@ -1,0 +1,4 @@
+export data $a = align 4 { w 0, }
+export data $b = align 4 { w 1, }
+export data $c = align 4 { w 1, }
+export data $d = align 8 { l 18446744073709551615, }

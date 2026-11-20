@@ -1,0 +1,22 @@
+export data $g = align 8 { l 4294967296, }
+export
+function w $main() {
+@start.1
+	%.1 =l alloc4 4
+@body.2
+	%.2 =w add 0, 6
+	%.3 =w extsh 2
+	%.4 =w add %.2, %.3
+	storew %.4, %.1
+	%.5 =l add %.1, 0
+	%.6 =w loadw %.5
+	%.7 =l add extern $x, 61
+	%.8 =w loadsb %.7
+	%.9 =w extsb %.8
+	%.10 =w add %.6, %.9
+	%.11 =l extsw %.10
+	%.12 =l add %.11, 2
+	%.13 =l add %.12, 8
+	ret %.13
+}
+export data $x = align 8 { z 64 }

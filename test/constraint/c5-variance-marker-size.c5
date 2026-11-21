@@ -1,0 +1,1 @@
+forall<size +N> struct A { array<int, N> a; };

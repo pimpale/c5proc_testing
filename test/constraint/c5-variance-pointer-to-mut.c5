@@ -1,0 +1,2 @@
+forall<constness +C> struct Foo { C int* elem; };
+void f(Foo<mut>* a) { const Foo<const>* ok = a; Foo<const>* b = a; }

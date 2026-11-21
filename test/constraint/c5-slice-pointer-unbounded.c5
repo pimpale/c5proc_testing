@@ -1,1 +1,1 @@
-slice<int> f(int *p) { return p[1 ...]; }
+slice<mut, int> f(int *p) { return p[1 ...]; }

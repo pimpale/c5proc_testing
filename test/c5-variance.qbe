@@ -1,0 +1,205 @@
+type :slice.1 = { l, l, }
+export
+function w $eq(:slice.1 %.1, :slice.1 %.2) {
+@start.1
+@body.2
+	%.3 =l add %.1, 8
+	%.4 =l loadl %.3
+	%.5 =l add %.2, 8
+	%.6 =l loadl %.5
+	%.7 =w ceql %.4, %.6
+	ret %.7
+}
+export
+function w $readint(l %.1) {
+@start.3
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.4
+	%.3 =l loadl %.2
+	%.4 =w loadw %.3
+	ret %.4
+}
+export
+function l $same(l %.1) {
+@start.5
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.6
+	%.3 =l loadl %.2
+	ret %.3
+}
+export
+function w $showcf(l %.1) {
+@start.7
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.8
+	%.3 =l loadl %.2
+	%.4 =l add %.3, 0
+	%.5 =l loadl %.4
+	%.6 =w loadw %.5
+	ret %.6
+}
+type :View.2 = { l, l, }
+export
+function w $sum(:View.2 %.1) {
+@start.9
+	%.2 =l alloc4 4
+	%.3 =l alloc8 8
+@body.10
+	storew 0, %.2
+	%.4 =l extsw 0
+	storel %.4, %.3
+@for_cond.11
+	%.5 =l loadl %.3
+	%.6 =l add %.1, 8
+	%.7 =l loadl %.6
+	%.8 =w cultl %.5, %.7
+	jnz %.8, @for_body.12, @for_join.14
+@for_body.12
+	%.9 =w loadw %.2
+	%.10 =l add %.1, 0
+	%.11 =l loadl %.10
+	%.12 =l loadl %.3
+	%.13 =l mul %.12, 8
+	%.14 =l add %.11, %.13
+	%.15 =l add %.14, 0
+	%.16 =l loadl %.15
+	%.17 =w loadw %.16
+	%.18 =w add %.9, %.17
+	storew %.18, %.2
+@for_cont.13
+	%.19 =l loadl %.3
+	%.20 =l add %.19, 1
+	storel %.20, %.3
+	jmp @for_cond.11
+@for_join.14
+	%.21 =w loadw %.2
+	ret %.21
+}
+type :Foo.3 = { l, }
+type :slice.4 = { l, l, }
+data $.Lstring.7 = align 1 { b "%d %d %d %d %d %d %d %d %d\012\000", }
+export
+function w $main() {
+@start.15
+	%.1 =l alloc4 4
+	%.2 =l alloc4 4
+	%.3 =l alloc4 4
+	%.4 =l alloc8 8
+	%.5 =l alloc8 8
+	%.7 =l alloc8 8
+	%.8 =l alloc8 16
+	%.11 =l alloc8 8
+	%.12 =l alloc8 8
+	%.13 =l alloc8 8
+	%.14 =l alloc8 8
+	%.16 =l alloc8 16
+	%.18 =l alloc8 16
+	%.21 =l alloc8 16
+	%.26 =l alloc8 8
+	%.27 =l alloc8 8
+	%.29 =l alloc8 8
+	%.30 =l alloc8 8
+	%.32 =l alloc8 8
+	%.34 =l alloc4 3
+	%.37 =l alloc8 16
+	%.39 =l alloc8 16
+	%.44 =l alloc4 4
+	%.46 =l alloc4 4
+@body.16
+	storew 5, %.1
+	storew 7, %.2
+	storew 9, %.3
+	storel %.1, %.4
+	%.6 =l loadl %.4
+	storel %.6, %.5
+	storel %.3, %.7
+	%.9 =l extsw 0
+	storel %.9, %.8
+	%.10 =l add %.8, 8
+	storel 0, %.10
+	call extern $"vec_push<Foo<>>"(l %.8, :Foo.3 %.4)
+	storel extern $readint, %.11
+	storel extern $same, %.12
+	storel extern $readint, %.13
+	%.15 =l loadl %.13
+	storel %.15, %.14
+	storel %.1, %.16
+	%.17 =l add %.16, 8
+	storel %.2, %.17
+	storel %.16, %.18
+	%.19 =l add %.18, 8
+	%.20 =l extsw 2
+	storel %.20, %.19
+	%.22 =l loadl %.18
+	storel %.22, %.21
+	%.23 =l add %.18, 8
+	%.24 =l add %.21, 8
+	%.25 =l loadl %.23
+	storel %.25, %.24
+	storel extern $showcf, %.26
+	%.28 =l loadl %.26
+	storel %.28, %.27
+	storel %.4, %.29
+	%.31 =l loadl %.29
+	storel %.31, %.30
+	%.33 =l loadl %.5
+	storel %.33, %.32
+	storeb 97, %.34
+	%.35 =l add %.34, 1
+	storeb 98, %.35
+	%.36 =l add %.34, 2
+	storeb 99, %.36
+	storel %.34, %.37
+	%.38 =l add %.37, 8
+	storel 3, %.38
+	%.40 =l loadl %.37
+	storel %.40, %.39
+	%.41 =l add %.37, 8
+	%.42 =l add %.39, 8
+	%.43 =l loadl %.41
+	storel %.43, %.42
+	%.45 =w call extern $eq(:slice.4 %.37, :slice.4 %.39)
+	storew %.45, %.44
+	%.47 =w call extern $eq(:slice.4 %.39, :slice.4 %.37)
+	storew %.47, %.46
+	%.48 =l add %.5, 0
+	%.49 =l loadl %.48
+	%.50 =w loadw %.49
+	%.51 =l loadl %.11
+	%.52 =w call %.51(l %.1)
+	%.53 =l loadl %.12
+	%.54 =l call %.53(l %.2)
+	%.55 =w loadw %.54
+	%.56 =l add %.14, 0
+	%.57 =l loadl %.56
+	%.58 =w call %.57(l %.1)
+	%.59 =w call extern $sum(:View.2 %.21)
+	%.60 =w call extern $sum(:View.2 %.18)
+	%.61 =l add %.27, 0
+	%.62 =l loadl %.61
+	%.63 =w call %.62(l %.4)
+	%.64 =l loadl %.30
+	%.65 =l add %.64, 0
+	%.66 =l loadl %.65
+	%.67 =w loadw %.66
+	%.68 =l add %.32, 0
+	%.69 =l loadl %.68
+	%.70 =w loadw %.69
+	%.71 =w add %.67, %.70
+	%.72 =w loadw %.44
+	%.73 =w loadw %.46
+	%.74 =w add %.72, %.73
+	%.75 =w call extern $printf(l $.Lstring.7, ..., w %.50, w %.52, w %.55, w %.58, w %.59, w %.60, w %.63, w %.71, w %.74)
+	ret 0
+}
+export comdat
+function $"vec_push<Foo<>>"(l %.1, :Foo.3 %.3) {
+@start.17
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.18
+	ret
+}

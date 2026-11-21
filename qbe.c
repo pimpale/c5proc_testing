@@ -287,8 +287,8 @@ convert(struct func *f, struct type *dst, struct type *src, struct value *l)
 
 	if (src == dst)
 		return l;
-	/* conversion between slice types, which have the same representation */
-	if (dst->kind == TYPESTRUCT)
+	/* conversion between const variants of a struct or union, which have the same representation */
+	if (dst->kind == TYPESTRUCT || dst->kind == TYPEUNION)
 		return l;
 	if (src->kind == TYPEPOINTER || src->kind == TYPENULLPTR)
 		src = &typeulong;

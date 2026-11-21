@@ -206,16 +206,22 @@ tagtype(struct scope *s, const char *name)
 	return NULL;
 }
 
-/* parse the argument list of an array<T, N> or slice<T> type */
+/* parse the argument list of an array<T, N> or slice<C, T> type */
 static struct type *
 builtingeneric(struct scope *s, enum tokenkind kind)
 {
 	struct type *t, *elem;
-	enum typequal q;
+	enum typequal q, sq;
 	struct expr *e;
 
 	next();
 	expect(TLESS, kind == T_ARRAY ? "after 'array'" : "after 'slice'");
+	sq = QUALNONE;
+	if (kind == T_SLICE) {
+		if (!genconstarg(s, &sq))
+			error(&tok.loc, "expected 'const', 'mut', or constness parameter as the first argument of 'slice'");
+		expect(TCOMMA, "after slice constness");
+	}
 	q = QUALNONE;
 	elem = typename(s, &q, NULL);
 	if (!elem)
@@ -224,7 +230,9 @@ builtingeneric(struct scope *s, enum tokenkind kind)
 		closeangle();
 		if (elem->kind == TYPEFUNC)
 			error(&tok.loc, "slice element has function type");
-		return mkslicetype(elem, q);
+		if (q & QUALCONSTANT)
+			error(&tok.loc, "slice element type cannot be const-qualified; constness is the first argument of 'slice'");
+		return mkslicetype(elem, q | sq);
 	}
 	expect(TCOMMA, "after array element type");
 	allowerasedsize = true;
@@ -450,6 +458,8 @@ tagspec(struct scope *s)
 		while (tok.kind != TRBRACE);
 		if (!t->u.structunion.members)
 			error(&tok.loc, "struct/union has no members");
+		if (t->u.structunion.gen && t->u.structunion.gen->pattern == t)
+			genvariancecheck(t->u.structunion.gen);
 		next();
 		if (!b.pack)
 			t->size = ALIGNUP(t->size, t->align);
@@ -1430,6 +1440,8 @@ paramlist(struct scope *s, struct generic *g, const char *clause)
 	nconst = 0;
 	do {
 		p = arrayadd(&params, sizeof(*p));
+		p->bit = QUALNONE;
+		p->variance = 0;
 		switch (tok.kind) {
 		case C5_TYPE:      p->kind = GENTYPE;      break;
 		case C5_SIZE:      p->kind = GENSIZE;      break;
@@ -1443,6 +1455,12 @@ paramlist(struct scope *s, struct generic *g, const char *clause)
 			error(&tok.loc, "expected 'type', 'size', or 'constness' in parameter list");
 		}
 		next();
+		if (tok.kind == TADD || tok.kind == TSUB) {
+			if (p->kind == GENSIZE)
+				error(&tok.loc, "size parameter cannot be marked '%s'", tokenstr(tok.kind));
+			p->variance = tok.kind == TADD ? 1 : -1;
+			next();
+		}
 		p->name = expect(TIDENT, "after parameter kind");
 		p->type = NULL;
 	} while (consume(TCOMMA));
@@ -1500,6 +1518,8 @@ genparams(struct scope *s, struct generic **exists)
 		for (i = 0; i < ex->nparam; ++i) {
 			if (ex->params[i].kind != GENTYPE)
 				error(&tok.loc, "exists parameters must be type parameters");
+			if (ex->params[i].variance)
+				error(&tok.loc, "exists parameter '%s' cannot be marked '%c'", ex->params[i].name, ex->params[i].variance > 0 ? '+' : '-');
 		}
 	} else if (!g) {
 		error(&tok.loc, "expected 'forall' or 'exists' after 'mono' or 'erased'");
@@ -1711,6 +1731,13 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 		}
 		gnuattr(&a, 0);  /* appertains to identifier */
 		kind = sc & SCTYPEDEF ? DECLTYPE : t->kind == TYPEFUNC ? DECLFUNC : DECLOBJECT;
+		/* instances of a struct or union are the only types that convert by their arguments */
+		if (gen && (kind != DECLTYPE || !gen->pattern)) {
+			for (i = 0; i < gen->nparam; ++i) {
+				if (gen->params[i].variance)
+					error(&tok.loc, "parameter '%s' of '%s' cannot be marked '%c': only parameters of a struct or union can be", gen->params[i].name, name, gen->params[i].variance > 0 ? '+' : '-');
+			}
+		}
 		prior = scopegetdecl(s, name, false);
 		if (prior && prior->kind != kind)
 			error(&tok.loc, "'%s' redeclared with different kind", name);
@@ -1720,11 +1747,11 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 			/* compare with the prior declaration in terms of its parameters */
 			if (prior->gen->nparam != gen->nparam)
 				error(&tok.loc, "'%s' redeclared with different number of forall parameters", name);
-			args = xreallocarray(NULL, gen->nparam, sizeof(*args));
 			for (i = 0; i < gen->nparam; ++i) {
-				args[i].type = prior->gen->params[i].type;
-				args[i].qual = QUALNONE;
+				if (prior->gen->params[i].kind != gen->params[i].kind)
+					error(&tok.loc, "'%s' redeclared with a different kind of forall parameter '%s'", name, gen->params[i].name);
 			}
+			args = genidentity(prior->gen);
 			q = QUALNONE;
 			t = typesubst(t, &q, gen, args);
 		}

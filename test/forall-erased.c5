@@ -21,8 +21,8 @@ T *last(struct Node<T> *n) {
 	return n->val;
 }
 
-forall<type T> T *id(T *p);
-forall<type U> U *id(U *p) {
+forall<type T, constness D> D T *id(D T *p);
+forall<type U, constness C> C U *id(C U *p) {
 	return p;
 }
 

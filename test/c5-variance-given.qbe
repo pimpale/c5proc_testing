@@ -1,0 +1,156 @@
+export
+function w $showc(l %.1) {
+@start.1
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.2
+	%.3 =l loadl %.2
+	%.4 =l add %.3, 0
+	%.5 =l loadl %.4
+	%.6 =w loadw %.5
+	ret %.6
+}
+export
+function w $showm(l %.1) {
+@start.3
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.4
+	%.3 =l loadl %.2
+	%.4 =l add %.3, 0
+	%.5 =l loadl %.4
+	%.6 =w loadw %.5
+	%.7 =w add 100, %.6
+	ret %.7
+}
+type :Show.1 = { l, }
+export
+function w $show(l %.1, :Show.1 %.3) {
+@start.5
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.6
+	%.4 =l loadl %.2
+	%.5 =l add %.3, 0
+	%.6 =l loadl %.5
+	%.7 =w call %.6(l %.4)
+	ret %.7
+}
+export
+function w $showp(l %.1, l %.3) {
+@start.7
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+@body.8
+	%.5 =l loadl %.2
+	%.6 =l loadl %.4
+	%.7 =l add %.6, 0
+	%.8 =l loadl %.7
+	%.9 =w call %.8(l %.5)
+	ret %.9
+}
+export
+function w $showbox(l %.1) {
+@start.9
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.10
+	%.3 =l loadl %.2
+	%.4 =l add %.3, 0
+	%.5 =l loadl %.4
+	%.6 =w loadw %.5
+	%.7 =w add 1000, %.6
+	ret %.7
+}
+export
+function w $showboxc(l %.1) {
+@start.11
+	%.2 =l alloc8 8
+	storel %.1, %.2
+@body.12
+	%.3 =l loadl %.2
+	%.4 =l add %.3, 0
+	%.5 =l loadl %.4
+	%.6 =w loadw %.5
+	%.7 =w add 2000, %.6
+	ret %.7
+}
+type :Show.2 = { l, }
+type :Show.3 = { l, }
+type :Show.4 = { l, }
+type :Foo.5 = { l, }
+data $.Lstring.8 = align 1 { b "%d %d %d %d %d %d %d %d\012\000", }
+type :Foo.6 = { l, }
+export
+function w $main() {
+@start.13
+	%.1 =l alloc4 4
+	%.2 =l alloc8 8
+	%.3 =l alloc8 8
+	%.4 =l alloc8 8
+	%.5 =l alloc4 4
+	%.6 =l alloc4 4
+	%.7 =l alloc4 4
+	%.8 =l alloc4 4
+	%.9 =l alloc4 4
+	%.10 =l alloc4 4
+	%.11 =l alloc8 8
+	%.15 =l alloc8 8
+	%.16 =l alloc8 8
+	%.19 =l alloc8 8
+	%.20 =l alloc8 8
+	%.22 =l alloc8 8
+@body.14
+	storew 5, %.1
+	storel %.1, %.2
+	storel %.1, %.3
+	storel %.1, %.4
+	storel extern $showc, %.11
+	%.12 =w call extern $show(l %.2, :Show.2 %.11)
+	storew %.12, %.5
+	%.13 =w call extern $show(l %.3, :Show.3 %.11)
+	storew %.13, %.6
+	%.14 =w call extern $showp(l %.2, l %.11)
+	storew %.14, %.9
+	storel extern $showc, %.15
+	storel extern $showm, %.16
+	%.17 =w call extern $show(l %.2, :Show.2 %.16)
+	storew %.17, %.7
+	%.18 =w call extern $show(l %.3, :Show.3 %.15)
+	storew %.18, %.8
+	storel extern $showbox, %.19
+	storel extern $showboxc, %.20
+	%.21 =w call extern $show(l %.4, :Show.4 %.19)
+	storew %.21, %.10
+	%.23 =:Foo.5 call extern $"first<Foo<>>"(:Foo.5 %.3, :Foo.5 %.2)
+	%.24 =l loadl %.23
+	storel %.24, %.22
+	%.25 =w loadw %.5
+	%.26 =w loadw %.6
+	%.27 =w loadw %.7
+	%.28 =w loadw %.8
+	%.29 =w loadw %.9
+	%.30 =w loadw %.10
+	%.31 =w call extern $"dup<Foo<>>"(:Foo.6 %.2, :Foo.6 %.2)
+	%.32 =w call extern $"dup<Foo<>>"(:Foo.5 %.3, :Foo.5 %.3)
+	%.33 =w add %.31, %.32
+	%.34 =l add %.22, 0
+	%.35 =l loadl %.34
+	%.36 =w loadw %.35
+	%.37 =w call extern $printf(l $.Lstring.8, ..., w %.25, w %.26, w %.27, w %.28, w %.29, w %.30, w %.33, w %.36)
+	ret 0
+}
+export comdat
+function :Foo.5 $"first<Foo<>>"(:Foo.5 %.1, :Foo.5 %.2) {
+@start.15
+@body.16
+	ret %.1
+}
+export comdat
+function w $"dup<Foo<>>"(:Foo.5 %.1, :Foo.5 %.2) {
+@start.17
+@body.18
+	ret 1
+}

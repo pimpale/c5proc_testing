@@ -1,16 +1,16 @@
 int printf(const char *, ...);
 array<int, 3> mk(int a) { array<int, 3> r = {a, a + 1, a + 2}; return r; }
 int sum(array<int, 3> a) { a[0] += 100; return a[0] + a[1] + a[2]; }
-int sums(slice<int> s) { int t = 0; for (unsigned long i = 0; i < s.length; i++) t += s[i]; return t; }
-slice<const unsigned char> gs = "hello"[1 ... 3];
+int sums(slice<const, int> s) { int t = 0; for (unsigned long i = 0; i < s.length; i++) t += s[i]; return t; }
+slice<const, unsigned char> gs = "hello"[1 ... 3];
 int main(void) {
 	array<int, 3> x = mk(1), y;
 	y = x;
 	y[1] = 50;
 	printf(cn"%d %d %d %d\n", x[1], y[1], sum(x), x[0]);
 	printf(cn"%d %d %d\n", sums(x[...]), sums(y[1 ...]), sums(x[... 1]));
-	slice<int> s = x[0 ... 2];
-	slice<int> t = s[1 ...];
+	slice<mut, int> s = x[0 ... 2];
+	slice<mut, int> t = s[1 ...];
 	printf(cn"%lu %lu %d %d\n", s.length, t.length, t[0], *(t + 1));
 	printf(cn"%lu %c%c%c\n", gs.length, gs[0], gs[1], gs[2]);
 	auto z = mk(7);

@@ -1,0 +1,38 @@
+int printf(const char *, ...);
+forall<constness +C> struct Foo { C int* elem; };
+forall<type T> struct Eq { int (*eq)(const T* a, const T* b); };
+forall<type -T> struct Show { int (*show)(const T* item); };
+
+forall<constness C> int fooeq(const Foo<C>* a, const Foo<C>* b) { return *a->elem == *b->elem; }
+int fooeqc(const Foo<const>* a, const Foo<const>* b) { return *a->elem == *b->elem; }
+
+/* an invariant vtable needs an instance per constness: a forall given provides it */
+forall<constness C> given const Eq<Foo<C>> FOOEQ = { fooeqc };
+
+forall<type T> int same(const T* a, const T* b, implicit Eq<T> e) { return e.eq(a, b); }
+
+forall<constness C> C char *find(C char *s, int c) {
+	for (; *s; s++)
+		if (*s == c)
+			return s;
+	return 0;
+}
+/* calls with its own constness parameter, and joins two of them */
+forall<constness C, constness D> C char *find2(C char *s, D char *t, int c) {
+	const char *either = find(c ? s : s, c);
+	C char *r = find(s, c);
+	return r;
+}
+forall<constness C> unsigned long len(slice<C, char> s) { return s.length; }
+forall<constness C> unsigned long len2(slice<C, char> s) { return len(s) + len(s[1 ...]); }
+
+int main(void) {
+	int x = 5, y = 5;
+	Foo<mut> m = { &x }, m2 = { &y };
+	Foo<const> c = { &x };
+	array<char, 4> buf = { 'a', 'b', 'c', 0 };
+	char *p = find2(buf, (const char *)buf, 'b');
+	*p = 'z';
+	printf(cn"%d %d %c %lu\n", same(&m, &m2), same(&c, &c), buf[1], len2(buf[...]));
+	return 0;
+}

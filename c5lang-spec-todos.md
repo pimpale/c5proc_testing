@@ -54,11 +54,31 @@ and `sizeof` parentheses being required only in C-incompatible mode.
 - [ ] **C5 Arrays — ABI.** State that an `array<T, N>` is passed and returned like a struct
   containing it.
 - [ ] **Slicing — details.** Say that bounds are not checked, and that slicing a `const T*`
-  gives `slice<const T>`.
+  gives `slice<const, T>`.
 - [ ] **String Literals — remaining type questions.** State that an empty string is a
   zero-length array, whether elements are `const` (*implemented:* not const, as in C), and
   that `L`/`u`/`U` literals in C5 files are also unterminated C5 arrays. Say that adjacent
   literals must agree on both the terminator and encoding prefix where they specify them.
+
+## Constness and variance
+
+- [ ] **Opaque structs.** The spec says an opaque struct's parameters are invariant unless
+  marked. *Implemented:* a `forall` struct cannot be instantiated before its definition is
+  complete, even behind a pointer, so markers on an opaque declaration have no effect yet.
+- [ ] **C-compatible mode.** Say whether the new conversions (function pointers, and
+  pointers to pointers such as `int **` to `const int *const *`) apply in `.c` files.
+  *Implemented:* they apply in both modes.
+- [ ] **Conditional operator.** Say what `c ? a : b` is when the operands are const
+  variants. *Implemented:* the operands must have compatible types, as before.
+- [ ] **Uncaptured qualifiers other than const.** *Implemented:* a type parameter never
+  captures any qualifier; a `volatile` pointee passed for a plain `T*` is rejected when
+  the argument is converted.
+- [ ] **Explicit type arguments.** *Implemented:* a const-qualified argument for a type
+  parameter, as in `Vec<const int>`, is an error.
+- [ ] **Mono instances.** *Implemented:* const variants of a type argument share one
+  instance, so `f<Foo<mut>>` and `f<Foo<const>>` are the same function.
+- [ ] **Given specificity.** A `forall<constness C>` given and a given for one constness
+  are not ordered by either tie-break. *Implemented:* ambiguous if both match.
 
 ## Destructuring and switch
 

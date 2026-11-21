@@ -1,0 +1,2 @@
+forall<type T> void g(T* p);
+void f(const int* p) { g(p); }

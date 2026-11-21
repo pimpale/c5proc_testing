@@ -258,8 +258,18 @@ assigncheck(struct expr *e, struct type *t)
 			break;
 		if (et->kind != TYPEPOINTER)
 			return "assignment to pointer must be from pointer or null pointer constant";
-		if (t->base != &typevoid && et->base != &typevoid && !typecompatible(t->base, et->base))
-			return "base types of pointer assignment must be compatible or void";
+		if (t->base != &typevoid && et->base != &typevoid && !typecompatible(t->base, et->base)) {
+			/* a pointer converts to a pointer to a const variant of its target where that is safe */
+			if (!typeconstvariant(t->base, et->base))
+				return "base types of pointer assignment must be compatible or void";
+			if (!qualsubset(et->qual, t->qual))
+				return "assignment to pointer discards qualifiers";
+			if (typeconstconv(et, t))
+				break;
+			if (t->base->kind == TYPEFUNC)
+				return "function types are const variants that do not convert; a function converts only to one whose parameters convert to its own, and which returns what its own result converts to";
+			return "pointed-to types are const variants that do not convert; a pointer converts only to a pointer to const of a type its target converts to";
+		}
 		if (!qualsubset(et->qual, t->qual))
 			return "assignment to pointer discards qualifiers";
 		break;
@@ -269,11 +279,11 @@ assigncheck(struct expr *e, struct type *t)
 		break;
 	case TYPESTRUCT:
 	case TYPEUNION:
-		if (typecompatible(t, et))
+		/* an instance converts to a const variant as the markers of its parameters allow */
+		if (typecompatible(t, et) || typeconstconv(et, t))
 			break;
-		/* a slice converts to a slice of the same elements with more qualifiers */
-		if (typeisslice(t) && typeisslice(et) && typecompatible(t->u.structunion.genargs[0].type, et->u.structunion.genargs[0].type) && qualsubset(et->u.structunion.genargs[0].qual, t->u.structunion.genargs[0].qual))
-			break;
+		if (typeconstvariant(t, et))
+			return "const variants of a struct or union convert only as the '+' and '-' markers on its parameters allow";
 		return t->kind == TYPEUNION ? "assignment to union type must be from compatible type" : "assignment to struct type must be from compatible type";
 	case TYPEPARAM:
 		if (t != et) {
@@ -1341,6 +1351,33 @@ struct callarg {
 
 static struct expr *mkcall(struct scope *, struct expr *, struct callarg *, size_t, struct type *, const struct location *);
 
+/*
+Report that the argument for the parameter p of a call, which is the
+written argument `argi` or the given for an implicit parameter if that
+is -1, cannot be converted to the parameter type pt.
+*/
+static void
+argerror(const struct location *loc, struct callarg *args, size_t argi, const char *fname, struct decl *p, struct type *pt, struct expr *arg, const char *err)
+{
+	char what[64];
+	struct type *at;
+
+	if (argi == -1) {
+		snprintf(what, sizeof(what), "the given for implicit parameter");
+	} else {
+		loc = &args[argi].loc;
+		snprintf(what, sizeof(what), "argument %zu", argi + 1);
+	}
+	at = arg->type;
+	if (pt->kind == TYPEARRAY && exprunarray(arg))
+		at = exprunarray(arg)->type;
+	softerror(loc, "%s%s%s%s has type '%s', but parameter%s%s%s has type '%s' (%s)",
+		what, fname ? " of call to '" : "", fname ? fname : "", fname ? "'" : "",
+		typespelling(at, QUALNONE),
+		p->name ? " '" : "", p->name ? p->name : "", p->name ? "'" : "",
+		typespelling(pt, QUALNONE), err);
+}
+
 /* a given that can be used for an implicit parameter */
 struct givencand {
 	struct decl *decl;
@@ -1377,22 +1414,41 @@ hasunbound(struct type *t, struct generic *g, struct genarg *bind)
 	return false;
 }
 
+/* whether t may refer to a type or size parameter of g that has no argument in `bind` */
+static bool
+notinferred(struct type *t, struct generic *g, struct genarg *bind)
+{
+	size_t i;
+
+	if (hasunbound(t, g, bind))
+		return true;
+	for (i = 0; i < g->nparam; ++i) {
+		if (g->params[i].kind == GENSIZE && !bind[i].size && typehasparam(t, g))
+			return true;
+	}
+	return false;
+}
+
 /*
-Whether the given d can be used for an implicit parameter of type pt.
+Whether the given d can be used for an implicit parameter of type pt,
+either as its value or, if `byaddr` is set, as what it points to.
 The parameter may refer to the parameters of the function being called,
 g, which are bound in `bind` where they are known; matching the given may
 determine more of them.
+
+The types are unified without regard to constness, and the given must
+then convert to the parameter. The constness parameters of a forall
+given are chosen so that it does.
 */
 static bool
-matchgiven(struct decl *d, struct generic *g, struct genarg *bind, struct type *pt, struct givencand *c)
+matchgivenas(struct decl *d, struct generic *g, struct genarg *bind, struct type *pt, bool byaddr, struct givencand *c)
 {
 	struct unifier u;
 	struct genarg *ident, *args;
 	struct generic *fresh;
-	struct type *ht;
+	struct type *ht, *want;
 	enum typequal hq, q;
 	size_t i;
-	int pass;
 
 	ht = giventype(d, &hq);
 	fresh = NULL;
@@ -1403,30 +1459,30 @@ matchgiven(struct decl *d, struct generic *g, struct genarg *bind, struct type *
 		q = QUALNONE;
 		ht = typesubst(ht, &q, d->gen, ident);
 	}
-	for (pass = 0;; ++pass) {
-		if (pass == 2)
+	u.lax = true;
+	u.g[0] = g;
+	u.bind[0] = NULL;
+	if (g) {
+		u.bind[0] = xreallocarray(NULL, g->nparam, sizeof(*bind));
+		memcpy(u.bind[0], bind, g->nparam * sizeof(*bind));
+	}
+	u.g[1] = fresh;
+	u.bind[1] = NULL;
+	if (fresh) {
+		u.bind[1] = xreallocarray(NULL, fresh->nparam, sizeof(*bind));
+		memset(u.bind[1], 0, fresh->nparam * sizeof(*bind));
+	}
+	if (byaddr) {
+		/* a pointer to a const given must be a pointer to const */
+		if (!qualsubset(hq, pt->qual) || !unify(&u, pt->base, pt->qual, ht, hq | pt->qual))
 			return false;
-		/* a pointer parameter can also take the address of a given */
-		if (pass == 1 && pt->kind != TYPEPOINTER)
-			return false;
-		u.g[0] = g;
-		u.bind[0] = NULL;
-		if (g) {
-			u.bind[0] = xreallocarray(NULL, g->nparam, sizeof(*bind));
-			memcpy(u.bind[0], bind, g->nparam * sizeof(*bind));
-		}
-		u.g[1] = fresh;
-		u.bind[1] = NULL;
-		if (fresh) {
-			u.bind[1] = xreallocarray(NULL, fresh->nparam, sizeof(*bind));
-			memset(u.bind[1], 0, fresh->nparam * sizeof(*bind));
-		}
-		if (pass == 0 ? unify(&u, pt, QUALNONE, ht, QUALNONE) : unify(&u, pt->base, pt->qual, ht, hq | pt->qual))
-			break;
+	} else if (!unify(&u, pt, QUALNONE, ht, QUALNONE)) {
+		return false;
 	}
 	c->decl = d;
-	c->byaddr = pass == 1;
+	c->byaddr = byaddr;
 	c->args = NULL;
+	args = NULL;
 	if (fresh) {
 		/* the type of the given must determine all of its parameters */
 		args = xreallocarray(NULL, fresh->nparam, sizeof(*args));
@@ -1449,7 +1505,6 @@ matchgiven(struct decl *d, struct generic *g, struct genarg *bind, struct type *
 					return false;
 				break;
 			case GENCONSTNESS:
-				args[i].constset = true;
 				break;
 			}
 		}
@@ -1467,7 +1522,40 @@ matchgiven(struct decl *d, struct generic *g, struct genarg *bind, struct type *
 		}
 	}
 	c->bind = u.bind[0];
-	return true;
+	/* the type wanted of the given, now that the arguments of the call are known */
+	q = QUALNONE;
+	want = byaddr ? pt->base : pt;
+	if (g)
+		want = genpartial(g, u.bind[0], want, &q);
+	if (fresh) {
+		/*
+		The given converts to the wanted type if its constness
+		parameters are const wherever const is wanted of them, other
+		than in positive positions, where the given may be less const.
+		*/
+		genscanconst(fresh, args, ht, want, -1);
+		for (i = 0; i < fresh->nparam; ++i) {
+			if (fresh->params[i].kind == GENCONSTNESS)
+				args[i].constset = true;
+		}
+		q = QUALNONE;
+		ht = typesubst(ht, &q, fresh, args);
+	}
+	if (typecompatible(ht, want))
+		return true;
+	/* through a pointer, the given is only seen as a const variant if it cannot be written */
+	if (byaddr && !(pt->qual & QUALCONST))
+		return false;
+	return typeconstconv(ht, want);
+}
+
+static bool
+matchgiven(struct decl *d, struct generic *g, struct genarg *bind, struct type *pt, struct givencand *c)
+{
+	if (matchgivenas(d, g, bind, pt, false, c))
+		return true;
+	/* a pointer parameter can also take the address of a given */
+	return pt->kind == TYPEPOINTER && matchgivenas(d, g, bind, pt, true, c);
 }
 
 /* whether the type of the given p can be made the type of the given d by substituting the parameters of p */
@@ -1483,6 +1571,7 @@ givengeneralizes(struct decl *p, struct decl *d)
 	dt = giventype(d, &q);
 	if (!p->gen)
 		return typecompatible(pt, dt);
+	u.lax = false;
 	u.g[0] = genfresh(p->gen, &ident);
 	u.bind[0] = xreallocarray(NULL, p->gen->nparam, sizeof(*ident));
 	memset(u.bind[0], 0, p->gen->nparam * sizeof(*ident));
@@ -1493,13 +1582,38 @@ givengeneralizes(struct decl *p, struct decl *d)
 	return unify(&u, pt, QUALNONE, dt, QUALNONE);
 }
 
+/*
+Whether the given c is preferred to the given `other` for the same
+implicit parameter: if it is more specific, in that its type can be
+obtained from the type of `other` by substituting type variables, or,
+between const variants, if it is more general, in that `other` converts
+to it.
+*/
+static bool
+givenbeats(struct decl *c, struct decl *other)
+{
+	struct type *ct, *ot;
+	enum typequal q;
+
+	if (givengeneralizes(other, c) && !givengeneralizes(c, other))
+		return true;
+	if (c->gen || other->gen)
+		return false;
+	ct = giventype(c, &q);
+	ot = giventype(other, &q);
+	if (typecompatible(ct, ot) || !typeconstvariant(ct, ot))
+		return false;
+	return typeconstconv(ot, ct) && !typeconstconv(ct, ot);
+}
+
 /* the types that are being resolved from given functions, to detect premises that never terminate */
 static struct type *goals[32];
 static size_t ngoals;
 
 /*
 Find the given for an implicit parameter of type pt: the one in the
-innermost scope that has any, and the most specific one in that scope.
+innermost scope that has any, and the preferred one in that scope (see
+givenbeats).
 Returns the argument for the parameter.
 */
 static struct expr *
@@ -1529,7 +1643,7 @@ resolvegiven(struct scope *s, struct generic *g, struct genarg *bind, struct typ
 	best = NULL;
 	arrayforeach(&cands, c) {
 		arrayforeach(&cands, other) {
-			if (other != c && !(givengeneralizes(other->decl, c->decl) && !givengeneralizes(c->decl, other->decl)))
+			if (other != c && !givenbeats(c->decl, other->decl))
 				break;
 		}
 		if (other == (void *)((char *)cands.val + cands.len)) {
@@ -1586,7 +1700,8 @@ mkcall(struct scope *s, struct expr *r, struct callarg *args, size_t nargs, stru
 	struct generic *g;
 	struct genarg *bind, *try;
 	struct expr *e, **slots, **end, *a, *extra, **extraend;
-	struct type *t, *at;
+	struct type *t, *at, *pt;
+	enum typequal q;
 	size_t i, pi, nparam, *argparam, *slotarg;
 	const char *err, *fname;
 
@@ -1665,7 +1780,7 @@ mkcall(struct scope *s, struct expr *r, struct callarg *args, size_t nargs, stru
 	}
 	*extraend = NULL;
 	if (g) {
-		/* infer from the arguments, in the order they are written */
+		/* a constness parameter is const if any argument supplies const to it, and mut otherwise */
 		for (i = 0; i < nargs; ++i) {
 			if (argparam[i] == -1)
 				continue;
@@ -1674,7 +1789,27 @@ mkcall(struct scope *s, struct expr *r, struct callarg *args, size_t nargs, stru
 			at = a->type;
 			if (p->type->kind == TYPEARRAY && exprunarray(a))
 				at = a->base->type;
-			if (!genunify(g, bind, p->type, p->qual, at, QUALNONE))
+			genscanconst(g, bind, p->type, at, 1);
+		}
+		for (i = 0; i < g->nparam; ++i) {
+			if (g->params[i].kind == GENCONSTNESS)
+				bind[i].constset = true;
+		}
+		/*
+		A type or size parameter is bound by its first occurrence
+		in the arguments, in the order they are written. An
+		argument that does not agree with the parameters bound so
+		far is left to be converted, below.
+		*/
+		for (i = 0; i < nargs; ++i) {
+			if (argparam[i] == -1)
+				continue;
+			p = params[argparam[i]];
+			a = args[i].expr;
+			at = a->type;
+			if (p->type->kind == TYPEARRAY && exprunarray(a))
+				at = a->base->type;
+			if (!genunify(g, bind, p->type, p->qual, at, QUALNONE) && notinferred(p->type, g, bind))
 				error(&args[i].loc, "cannot infer type arguments of '%s' from argument %zu: it has type '%s', which is inconsistent with parameter type '%s' and the earlier arguments", fd->name, i + 1, typespelling(at, QUALNONE), typespelling(p->type, p->qual));
 		}
 		/* then from the type expected of the result, where that determines more */
@@ -1684,6 +1819,21 @@ mkcall(struct scope *s, struct expr *r, struct callarg *args, size_t nargs, stru
 			if (genunify(g, try, t->base, QUALNONE, expected, QUALNONE))
 				memcpy(bind, try, g->nparam * sizeof(*try));
 			free(try);
+		}
+		/* the arguments must convert to the parameter types that are now known */
+		for (i = 0; i < nargs; ++i) {
+			if (argparam[i] == -1)
+				continue;
+			pi = argparam[i];
+			if (notinferred(params[pi]->type, g, bind))
+				continue;
+			q = QUALNONE;
+			pt = genpartial(g, bind, params[pi]->type, &q);
+			err = assigncheck(slots[pi], pt);
+			if (err) {
+				argerror(loc, args, i, fname, params[pi], pt, slots[pi], err);
+				slots[pi] = assignrecover(pt);
+			}
 		}
 		/* then from the givens for the implicit parameters */
 		for (pi = 0; pi < nparam; ++pi) {
@@ -1719,25 +1869,7 @@ mkcall(struct scope *s, struct expr *r, struct callarg *args, size_t nargs, stru
 		}
 		err = assigncheck(slots[pi], params[pi]->type);
 		if (err) {
-			char what[64], *pname;
-			const struct location *aloc;
-
-			aloc = loc;
-			pname = params[pi]->name;
-			if (slotarg[pi] == -1) {
-				snprintf(what, sizeof(what), "the given for implicit parameter");
-			} else {
-				aloc = &args[slotarg[pi]].loc;
-				snprintf(what, sizeof(what), "argument %zu", slotarg[pi] + 1);
-			}
-			at = slots[pi]->type;
-			if (params[pi]->type->kind == TYPEARRAY && exprunarray(slots[pi]))
-				at = exprunarray(slots[pi])->type;
-			softerror(aloc, "%s%s%s%s has type '%s', but parameter%s%s%s has type '%s' (%s)",
-				what, fname ? " of call to '" : "", fname ? fname : "", fname ? "'" : "",
-				typespelling(at, QUALNONE),
-				pname ? " '" : "", pname ? pname : "", pname ? "'" : "",
-				typespelling(params[pi]->type, QUALNONE), err);
+			argerror(loc, args, slotarg[pi], fname, params[pi], params[pi]->type, slots[pi], err);
 			a = assignrecover(params[pi]->type);
 		} else {
 			a = exprassign(slots[pi], params[pi]->type);
@@ -2192,8 +2324,11 @@ castexpr(struct scope *s)
 			e = postfixexpr(s, decay(e));
 			goto done;
 		}
-		if (t != &typevoid && !(t->prop & PROPSCALAR))
-			error(&tok.loc, "cast type must be scalar");
+		/* a struct or union can be cast to a const variant of its type */
+		if (t != &typevoid && !(t->prop & PROPSCALAR) && t->kind != TYPESTRUCT && t->kind != TYPEUNION)
+			error(&tok.loc, "cast type must be scalar, or a const variant of the operand type");
+		if (ct && ct != &typevoid && !(ct->prop & t->prop & PROPSCALAR) && !typeconstvariant(t, ct))
+			error(&tok.loc, "cast operand must have scalar type");
 		e = mkexpr(EXPRCAST, t, NULL);
 		e->toeval = toeval;
 		*end = e;
@@ -2203,8 +2338,12 @@ castexpr(struct scope *s)
 	e = unaryexpr(s);
 
 done:
-	if (ct && ct != &typevoid && !(e->type->prop & PROPSCALAR))
+	if (ct && (ct->kind == TYPESTRUCT || ct->kind == TYPEUNION)) {
+		if (!typeconstvariant(e->type, ct))
+			error(&tok.loc, "cast to '%s' must be from a const variant of it, but the operand has type '%s'", typespelling(ct, QUALNONE), typespelling(e->type, QUALNONE));
+	} else if (ct && ct != &typevoid && !(e->type->prop & PROPSCALAR)) {
 		error(&tok.loc, "cast operand must have scalar type");
+	}
 	*end = e;
 	return r;
 }

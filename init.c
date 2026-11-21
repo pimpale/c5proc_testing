@@ -520,7 +520,8 @@ parseinit(struct scope *s, struct type *t)
 				goto add;
 			case TYPESTRUCT:
 			case TYPEUNION:
-				if (typeisslice(t) && typeisslice(expr->type))
+				/* a const variant of t initializes it as a whole, if it converts */
+				if (typeisslice(t) && typeisslice(expr->type) || !typecompatible(expr->type, t) && typeconstvariant(expr->type, t))
 					expr = exprassign(expr, t);
 				if (typecompatible(expr->type, t)) {
 					if (typeisslice(t) && expr->kind == EXPRCOMPOUND && !p.dep) {

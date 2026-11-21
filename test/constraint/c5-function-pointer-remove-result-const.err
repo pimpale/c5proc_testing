@@ -1,0 +1,1 @@
+error: function types are const variants that do not convert; a function converts only to one whose parameters convert to its own, and which returns what its own result converts to

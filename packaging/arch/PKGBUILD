@@ -9,7 +9,7 @@
 # conflict with the qbe package.
 
 pkgname=c5proc
-pkgver=r28.1f9d26c
+pkgver=r29.e10fc76
 pkgrel=1
 pkgdesc='C5 compiler (cproc with structured polymorphism), using a QBE fork with COMDAT support'
 arch=('x86_64')
@@ -55,6 +55,7 @@ package() {
 	install -Dm755 cproc-qbe "$pkgdir/usr/bin/c5proc-qbe"
 	install -Dm644 cproc.1 "$pkgdir/usr/share/man/man1/c5proc.1"
 	install -Dm644 include/c5.h "$pkgdir/usr/lib/cproc/include/c5.h"
+	install -Dm644 include/c5.h "$pkgdir/usr/lib/cproc/include/stddefer.h"
 	install -Dm755 qbe/qbe "$pkgdir/usr/lib/cproc/qbe"
 	install -Dm644 c5lang.md "$pkgdir/usr/share/doc/c5proc/c5lang.md"
 	install -Dm644 LICENSE "$pkgdir/usr/share/licenses/c5proc/LICENSE"

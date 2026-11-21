@@ -1,0 +1,3 @@
+int wr(int* v);
+int (*ok)(int*) = wr;
+int (*f)(const int*) = wr;

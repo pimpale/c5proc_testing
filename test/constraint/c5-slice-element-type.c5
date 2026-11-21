@@ -1,1 +1,1 @@
-int g(slice<int> s); int f(void) { array<int, 2> a = {1, 2}; slice<long> s = a[...]; return 0; }
+int g(slice<mut, int> s); int f(void) { array<int, 2> a = {1, 2}; slice<mut, long> s = a[...]; return 0; }

@@ -1,0 +1,1 @@
+error: argument 1 of call to 'g' has type 'const int*', but parameter 'p' has type 'int*' (assignment to pointer discards qualifiers)

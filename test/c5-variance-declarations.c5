@@ -1,0 +1,7 @@
+forall<constness +C, type +T> typedef struct { const T* item; C int* n; } Ref;
+forall<constness +C> union U { C int* a; C char* b; };
+forall<constness +C> struct Node { C int* val; const Node<C>* next; };
+int use(Ref<const, Node<const>> r, U<const> u, const Node<const>* n);
+int g(Ref<mut, Node<mut>> r, U<mut> u, Node<mut>* n) {
+	return use(r, u, n);
+}

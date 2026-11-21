@@ -1,0 +1,2 @@
+forall<type T> struct Vec { T* data; unsigned long len; };
+Vec<const int> v;

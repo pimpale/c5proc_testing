@@ -1,0 +1,2 @@
+forall<constness -C> struct Bar { int (*func)(C int* param); };
+void f(Bar<const> c, Bar<mut> m) { Bar<mut> ok = c; Bar<const> bad = m; }

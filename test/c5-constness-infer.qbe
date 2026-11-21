@@ -1,0 +1,194 @@
+export
+function w $fooeq(l %.1, l %.3) {
+@start.1
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+@body.2
+	%.5 =l loadl %.2
+	%.6 =l add %.5, 0
+	%.7 =l loadl %.6
+	%.8 =w loadw %.7
+	%.9 =l loadl %.4
+	%.10 =l add %.9, 0
+	%.11 =l loadl %.10
+	%.12 =w loadw %.11
+	%.13 =w ceqw %.8, %.12
+	ret %.13
+}
+export
+function w $fooeqc(l %.1, l %.3) {
+@start.3
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+@body.4
+	%.5 =l loadl %.2
+	%.6 =l add %.5, 0
+	%.7 =l loadl %.6
+	%.8 =w loadw %.7
+	%.9 =l loadl %.4
+	%.10 =l add %.9, 0
+	%.11 =l loadl %.10
+	%.12 =w loadw %.11
+	%.13 =w ceqw %.8, %.12
+	ret %.13
+}
+export data $FOOEQ = align 8 { l $fooeqc, }
+type :Eq.1 = { l, }
+export
+function w $same(l %.1, l %.3, :Eq.1 %.5) {
+@start.5
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+@body.6
+	%.6 =l loadl %.2
+	%.7 =l loadl %.4
+	%.8 =l add %.5, 0
+	%.9 =l loadl %.8
+	%.10 =w call %.9(l %.6, l %.7)
+	ret %.10
+}
+export
+function l $find(l %.1, w %.3) {
+@start.7
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc4 4
+	storew %.3, %.4
+@body.8
+@for_cond.9
+	%.5 =l loadl %.2
+	%.6 =w loadsb %.5
+	%.7 =w extsb %.6
+	jnz %.7, @for_body.10, @for_join.12
+@for_body.10
+	%.8 =l loadl %.2
+	%.9 =w loadsb %.8
+	%.10 =w extsb %.9
+	%.11 =w loadw %.4
+	%.12 =w ceqw %.10, %.11
+	jnz %.12, @if_true.13, @if_false.14
+@if_true.13
+	%.13 =l loadl %.2
+	ret %.13
+@if_false.14
+@for_cont.11
+	%.14 =l loadl %.2
+	%.15 =l add %.14, 1
+	storel %.15, %.2
+	jmp @for_cond.9
+@for_join.12
+	%.16 =l extsw 0
+	ret %.16
+}
+export
+function l $find2(l %.1, l %.3, w %.5) {
+@start.15
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+	%.6 =l alloc4 4
+	storew %.5, %.6
+	%.7 =l alloc8 8
+	%.14 =l alloc8 8
+@body.16
+	%.8 =w loadw %.6
+	jnz %.8, @cond_true.17, @cond_false.18
+@cond_true.17
+	%.9 =l loadl %.2
+	jmp @cond_join.19
+@cond_false.18
+	%.10 =l loadl %.2
+@cond_join.19
+	%.11 =l phi @cond_true.17 %.9, @cond_false.18 %.10
+	%.12 =w loadw %.6
+	%.13 =l call extern $find(l %.11, w %.12)
+	storel %.13, %.7
+	%.15 =l loadl %.2
+	%.16 =w loadw %.6
+	%.17 =l call extern $find(l %.15, w %.16)
+	storel %.17, %.14
+	%.18 =l loadl %.14
+	ret %.18
+}
+type :slice.2 = { l, l, }
+export
+function l $len(:slice.2 %.1) {
+@start.20
+@body.21
+	%.2 =l add %.1, 8
+	%.3 =l loadl %.2
+	ret %.3
+}
+export
+function l $len2(:slice.2 %.1) {
+@start.22
+	%.3 =l alloc8 16
+@body.23
+	%.2 =l call extern $len(:slice.2 %.1)
+	%.4 =l add %.1, 0
+	%.5 =l loadl %.4
+	%.6 =l mul 1, 1
+	%.7 =l add %.5, %.6
+	storel %.7, %.3
+	%.8 =l add %.3, 8
+	%.9 =l add %.1, 8
+	%.10 =l loadl %.9
+	%.11 =l sub %.10, 1
+	storel %.11, %.8
+	%.12 =l call extern $len(:slice.2 %.3)
+	%.13 =l add %.2, %.12
+	ret %.13
+}
+data $.Lstring.9 = align 1 { b "%d %d %c %lu\012\000", }
+type :Eq.3 = { l, }
+type :Eq.4 = { l, }
+type :slice.5 = { l, l, }
+export
+function w $main() {
+@start.24
+	%.1 =l alloc4 4
+	%.2 =l alloc4 4
+	%.3 =l alloc8 8
+	%.4 =l alloc8 8
+	%.5 =l alloc8 8
+	%.6 =l alloc4 4
+	%.10 =l alloc8 8
+	%.20 =l alloc8 16
+@body.25
+	storew 5, %.1
+	storew 5, %.2
+	storel %.1, %.3
+	storel %.2, %.4
+	storel %.1, %.5
+	storeb 97, %.6
+	%.7 =l add %.6, 1
+	storeb 98, %.7
+	%.8 =l add %.6, 2
+	storeb 99, %.8
+	%.9 =l add %.6, 3
+	storeb 0, %.9
+	%.11 =l call extern $find2(l %.6, l %.6, w 98)
+	storel %.11, %.10
+	%.12 =l loadl %.10
+	storeb 122, %.12
+	%.13 =w call extern $same(l %.3, l %.4, :Eq.3 extern $FOOEQ)
+	%.14 =w call extern $same(l %.5, l %.5, :Eq.4 extern $FOOEQ)
+	%.15 =l extsw 1
+	%.16 =l mul %.15, 1
+	%.17 =l add %.6, %.16
+	%.18 =w loadsb %.17
+	%.19 =w extsb %.18
+	storel %.6, %.20
+	%.21 =l add %.20, 8
+	storel 4, %.21
+	%.22 =l call extern $len2(:slice.5 %.20)
+	%.23 =w call extern $printf(l $.Lstring.9, ..., w %.13, w %.14, w %.19, l %.22)
+	ret 0
+}

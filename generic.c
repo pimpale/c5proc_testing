@@ -473,38 +473,94 @@ unifysize(struct generic *g, struct genarg *bind, struct expr *p, struct expr *a
 	return sizesame(b->size, a);
 }
 
-/* unify a constness argument in a parameter type with one in an argument type */
-static bool
-unifyconst(struct generic *g, struct genarg *bind, enum typequal p, enum typequal a)
+/*
+The join of two constness arguments: const if either is, and otherwise
+whichever constness parameters either one is.
+*/
+static enum typequal
+constjoin(enum typequal a, enum typequal b)
+{
+	a = (a | b) & QUALCONSTANT;
+	return a & QUALCONST ? QUALCONST : a;
+}
+
+/* an argument supplies the qualifiers aq where the parameter type has the qualifiers pq */
+static void
+scanqual(struct generic *g, struct genarg *bind, enum typequal pq, enum typequal aq, int sign)
 {
 	size_t i;
 
+	if (sign < 0)
+		return;
 	for (i = 0; i < g->nparam; ++i) {
-		if (g->params[i].kind != GENCONSTNESS || !(p & g->params[i].bit))
-			continue;
-		if (!bind[i].constset) {
-			bind[i].qual = a;
-			bind[i].constset = true;
-			return true;
-		}
-		return bind[i].qual == a;
+		/* an argument that was written out is not inferred */
+		if (g->params[i].kind == GENCONSTNESS && pq & g->params[i].bit && !bind[i].constset)
+			bind[i].qual = constjoin(bind[i].qual, aq);
 	}
-	return p == a;
 }
 
 /*
-Unify the parameter type p with the argument type a, binding the
-parameters of g in `bind`. Parts of p that do not refer to parameters
-of g are not checked here; the argument is converted to the
-substituted parameter type afterwards. The only conversion allowed is
-adding qualifiers to pointed-to types.
+Infer the constness parameters of g from an argument of type a for the
+parameter type p: a constness parameter is const if any argument
+supplies const where it occurs. `sign` is the position of p (see
+genvariancecheck); in a negative position, an argument that accepts
+const says nothing about the parameter, so it is ignored.
+*/
+void
+genscanconst(struct generic *g, struct genarg *bind, struct type *p, struct type *a, int sign)
+{
+	struct decl *pp, *ap;
+	struct generic *tg;
+	struct genarg *pargs, *aargs;
+	size_t i;
+
+	if (!typehasparam(p, g) || p->kind != a->kind)
+		return;
+	switch (p->kind) {
+	case TYPEPOINTER:
+		scanqual(g, bind, p->qual, a->qual, sign);
+		if (p->base->kind != TYPEFUNC && !(p->qual & QUALCONST))
+			sign = 0;
+		genscanconst(g, bind, p->base, a->base, sign);
+		break;
+	case TYPEARRAY:
+		scanqual(g, bind, p->qual, a->qual, sign);
+		genscanconst(g, bind, p->base, a->base, sign);
+		break;
+	case TYPEFUNC:
+		genscanconst(g, bind, p->base, a->base, sign);
+		for (pp = p->u.func.params, ap = a->u.func.params; pp && ap; pp = pp->next, ap = ap->next)
+			genscanconst(g, bind, pp->type, ap->type, -sign);
+		break;
+	case TYPESTRUCT:
+	case TYPEUNION:
+		tg = p->u.structunion.gen;
+		if (!tg || a->u.structunion.gen != tg)
+			break;
+		pargs = p->u.structunion.genargs;
+		aargs = a->u.structunion.genargs;
+		for (i = 0; i < tg->nparam; ++i) {
+			if (tg->params[i].kind == GENCONSTNESS)
+				scanqual(g, bind, pargs[i].qual, aargs[i].qual, sign * tg->params[i].variance);
+			else if (pargs[i].type)
+				genscanconst(g, bind, pargs[i].type, aargs[i].type, sign * tg->params[i].variance);
+		}
+		break;
+	}
+}
+
+/*
+Unify the parameter type p with the argument type a, binding the type
+and size parameters of g in `bind`. The first occurrence of a parameter
+binds it. Constness is not considered here (see genscanconst), and
+parts of p that do not refer to parameters of g are not checked; the
+argument is converted to the substituted parameter type afterwards.
 */
 bool
 genunify(struct generic *g, struct genarg *bind, struct type *p, enum typequal pq, struct type *a, enum typequal aq)
 {
 	struct decl *pp, *ap;
 	struct genarg *b, *pargs, *aargs;
-	enum typequal bq;
 	size_t i;
 
 	if (!typehasparam(p, g))
@@ -512,34 +568,17 @@ genunify(struct generic *g, struct genarg *bind, struct type *p, enum typequal p
 	switch (p->kind) {
 	case TYPEPARAM:
 		b = &bind[p->u.param.index];
-		/* qualifiers of the argument not required by the parameter are part of the binding */
-		aq &= ~pq;
+		/* a type parameter never captures qualifiers */
 		if (!b->type) {
 			b->type = a;
-			b->qual = aq;
+			b->qual = QUALNONE;
 			return true;
 		}
-		return typesame(b->type, a) && (aq & ~b->qual) == 0;
+		return typeconstvariant(b->type, a);
 	case TYPEPOINTER:
 		if (a->kind != TYPEPOINTER)
 			return false;
-		bq = p->qual;
-		for (i = 0; i < g->nparam; ++i) {
-			if (g->params[i].kind != GENCONSTNESS || !(p->qual & g->params[i].bit))
-				continue;
-			b = &bind[i];
-			/* the constness of the argument binds the parameter */
-			if (!b->constset) {
-				b->qual = a->qual & QUALCONSTANT;
-				b->constset = true;
-			} else if (!qualsubset(a->qual & QUALCONSTANT, b->qual)) {
-				return false;
-			}
-			bq = bq & ~g->params[i].bit | b->qual;
-		}
-		if (!qualsubset(a->qual, bq) && p->base->kind != TYPEPARAM)
-			return false;
-		return genunify(g, bind, p->base, bq, a->base, a->qual);
+		return genunify(g, bind, p->base, p->qual, a->base, a->qual);
 	case TYPEARRAY:
 		if (a->kind != TYPEARRAY || a->u.array.byvalue != p->u.array.byvalue)
 			return false;
@@ -571,8 +610,7 @@ genunify(struct generic *g, struct genarg *bind, struct type *p, enum typequal p
 		aargs = a->u.structunion.genargs;
 		for (i = 0; i < p->u.structunion.gen->nparam; ++i) {
 			if (p->u.structunion.gen->params[i].kind == GENCONSTNESS) {
-				if (!unifyconst(g, bind, pargs[i].qual, aargs[i].qual))
-					return false;
+				/* see genscanconst */
 			} else if (!pargs[i].type) {
 				if (!unifysize(g, bind, pargs[i].size, aargs[i].size))
 					return false;
@@ -583,6 +621,309 @@ genunify(struct generic *g, struct genarg *bind, struct type *p, enum typequal p
 		return true;
 	}
 	return false;
+}
+
+/*
+Whether two types are const variants: the same apart from const
+qualifiers and constness arguments, at any depth. Const variants have
+the same representation.
+*/
+bool
+typeconstvariant(struct type *a, struct type *b)
+{
+	struct decl *ap, *bp;
+	struct generic *g;
+	struct genarg *aargs, *bargs;
+	size_t i;
+
+	if (typecompatible(a, b))
+		return true;
+	if (a->kind != b->kind)
+		return false;
+	switch (a->kind) {
+	case TYPEARRAY:
+		if (!typearraylensame(a, b))
+			return false;
+		/* fallthrough */
+	case TYPEPOINTER:
+		return !((a->qual ^ b->qual) & ~QUALCONSTANT) && typeconstvariant(a->base, b->base);
+	case TYPEFUNC:
+		if (a->u.func.isvararg != b->u.func.isvararg || !typeconstvariant(a->base, b->base))
+			return false;
+		for (ap = a->u.func.params, bp = b->u.func.params; ap && bp; ap = ap->next, bp = bp->next) {
+			if (!typeconstvariant(ap->type, bp->type))
+				return false;
+		}
+		return !ap && !bp;
+	case TYPESTRUCT:
+	case TYPEUNION:
+		g = a->u.structunion.gen;
+		if (!g || b->u.structunion.gen != g)
+			return false;
+		aargs = a->u.structunion.genargs;
+		bargs = b->u.structunion.genargs;
+		for (i = 0; i < g->nparam; ++i) {
+			switch (g->params[i].kind) {
+			case GENCONSTNESS:
+				break;
+			case GENSIZE:
+				if (!sizesame(aargs[i].size, bargs[i].size))
+					return false;
+				break;
+			case GENTYPE:
+				if (!typeconstvariant(aargs[i].type, bargs[i].type))
+					return false;
+				break;
+			}
+		}
+		return true;
+	}
+	return false;
+}
+
+/*
+Whether a value of type `from` converts implicitly to its const variant
+`to`. Constness may only be added where nothing can be written through
+the result that the source does not allow:
+
+- an instance of a struct or union converts as the markers of its
+  parameters say;
+- a pointer converts to a pointer to const of a type its target
+  converts to, but otherwise only to a pointer to the same type;
+- a function converts to one that takes arguments which convert to
+  its own parameters, and returns what its own result converts to.
+*/
+bool
+typeconstconv(struct type *from, struct type *to)
+{
+	struct decl *fp, *tp;
+	struct generic *g;
+	struct genarg *fargs, *targs;
+	size_t i;
+	int v;
+
+	if (typecompatible(from, to))
+		return true;
+	if (from->kind != to->kind)
+		return false;
+	switch (from->kind) {
+	case TYPEPOINTER:
+		if (!qualsubset(from->qual, to->qual))
+			return false;
+		if (typecompatible(from->base, to->base))
+			return true;
+		if (from->base->kind != TYPEFUNC && !(to->qual & QUALCONST))
+			return false;
+		return typeconstconv(from->base, to->base);
+	case TYPEFUNC:
+		if (from->u.func.isvararg != to->u.func.isvararg || !typeconstconv(from->base, to->base))
+			return false;
+		for (fp = from->u.func.params, tp = to->u.func.params; fp && tp; fp = fp->next, tp = tp->next) {
+			if (!typeconstconv(tp->type, fp->type))
+				return false;
+		}
+		return !fp && !tp;
+	case TYPESTRUCT:
+	case TYPEUNION:
+		g = from->u.structunion.gen;
+		if (!g || to->u.structunion.gen != g)
+			return false;
+		fargs = from->u.structunion.genargs;
+		targs = to->u.structunion.genargs;
+		for (i = 0; i < g->nparam; ++i) {
+			v = g->params[i].variance;
+			switch (g->params[i].kind) {
+			case GENCONSTNESS:
+				if (v > 0 ? !qualsubset(fargs[i].qual, targs[i].qual) : v < 0 ? !qualsubset(targs[i].qual, fargs[i].qual) : fargs[i].qual != targs[i].qual)
+					return false;
+				break;
+			case GENSIZE:
+				if (!sizesame(fargs[i].size, targs[i].size))
+					return false;
+				break;
+			case GENTYPE:
+				if (v > 0 ? !typeconstconv(fargs[i].type, targs[i].type) : v < 0 ? !typeconstconv(targs[i].type, fargs[i].type) : !typecompatible(fargs[i].type, targs[i].type))
+					return false;
+				break;
+			}
+		}
+		return true;
+	}
+	return false;
+}
+
+/*
+The const variant of t in which every constness argument is const.
+Const variants have the same representation, so one instance of a mono
+declaration serves all of them.
+*/
+struct type *
+typeeraseconst(struct type *t)
+{
+	struct type *n, *base;
+	struct generic *g;
+	struct genarg *args, *newargs;
+	struct decl *p, *np, **end;
+	enum typequal q;
+	size_t i;
+	bool changed;
+
+	switch (t->kind) {
+	case TYPEPOINTER:
+		base = typeeraseconst(t->base);
+		return base == t->base ? t : mkpointertype(base, t->qual);
+	case TYPEARRAY:
+		base = typeeraseconst(t->base);
+		if (base == t->base)
+			return t;
+		n = mktype(TYPEARRAY, t->prop);
+		*n = *t;
+		n->value = NULL;
+		n->base = base;
+		return n;
+	case TYPEFUNC:
+		changed = typeeraseconst(t->base) != t->base;
+		for (p = t->u.func.params; p; p = p->next)
+			changed |= typeeraseconst(p->type) != p->type;
+		if (!changed)
+			return t;
+		n = mktype(TYPEFUNC, t->prop);
+		*n = *t;
+		n->value = NULL;
+		n->base = typeeraseconst(t->base);
+		end = &n->u.func.params;
+		for (p = t->u.func.params; p; p = p->next) {
+			np = xmalloc(sizeof(*np));
+			*np = *p;
+			np->type = typeeraseconst(p->type);
+			*end = np;
+			end = &np->next;
+		}
+		*end = NULL;
+		return n;
+	case TYPESTRUCT:
+	case TYPEUNION:
+		g = t->u.structunion.gen;
+		if (!g || g->pattern == t)
+			return t;
+		args = t->u.structunion.genargs;
+		newargs = xreallocarray(NULL, g->nparam, sizeof(*newargs));
+		changed = false;
+		for (i = 0; i < g->nparam; ++i) {
+			newargs[i] = args[i];
+			if (g->params[i].kind == GENCONSTNESS) {
+				newargs[i].qual = QUALCONST;
+				newargs[i].constset = true;
+				changed |= args[i].qual != QUALCONST;
+			} else if (args[i].type) {
+				newargs[i].type = typeeraseconst(args[i].type);
+				changed |= newargs[i].type != args[i].type;
+			}
+		}
+		if (!changed) {
+			free(newargs);
+			return t;
+		}
+		q = QUALNONE;
+		return geninst(g, newargs, &q);
+	}
+	return t;
+}
+
+static const char *
+signname(int sign)
+{
+	return sign > 0 ? "positive" : sign < 0 ? "negative" : "invariant";
+}
+
+/* parameter i of g occurs in a position of the given sign in member m */
+static void
+varianceuse(struct generic *g, size_t i, int sign, struct member *m)
+{
+	int v;
+
+	v = g->params[i].variance;
+	if (v && v != sign)
+		error(&tok.loc, "parameter '%s' of '%s' is declared '%c', but member '%s' uses it in %s %s position", g->params[i].name, g->name ? g->name : "<anonymous>", v > 0 ? '+' : '-', m->name ? m->name : "<anonymous>", sign ? "a" : "an", signname(sign));
+}
+
+static void
+variancequal(struct generic *g, enum typequal q, int sign, struct member *m)
+{
+	size_t i;
+
+	for (i = 0; i < g->nparam; ++i) {
+		if (g->params[i].kind == GENCONSTNESS && q & g->params[i].bit)
+			varianceuse(g, i, sign, m);
+	}
+}
+
+static void
+variancetype(struct generic *g, struct type *t, int sign, struct member *m)
+{
+	struct generic *tg;
+	struct genarg *args;
+	struct decl *p;
+	size_t i;
+
+	if (!typehasparam(t, g))
+		return;
+	switch (t->kind) {
+	case TYPEPARAM:
+		varianceuse(g, t->u.param.index, sign, m);
+		break;
+	case TYPEPOINTER:
+		variancequal(g, t->qual, sign, m);
+		/* something can be stored through a pointer unless it is to const, or to a function */
+		if (t->base->kind != TYPEFUNC && !(t->qual & QUALCONST))
+			sign = 0;
+		variancetype(g, t->base, sign, m);
+		break;
+	case TYPEARRAY:
+		variancequal(g, t->qual, sign, m);
+		variancetype(g, t->base, sign, m);
+		break;
+	case TYPEFUNC:
+		variancetype(g, t->base, sign, m);
+		for (p = t->u.func.params; p; p = p->next)
+			variancetype(g, p->type, -sign, m);
+		break;
+	case TYPESTRUCT:
+	case TYPEUNION:
+		/* an argument is in the position of the parameter it is for */
+		tg = t->u.structunion.gen;
+		if (!tg)
+			break;
+		args = t->u.structunion.genargs;
+		for (i = 0; i < tg->nparam; ++i) {
+			if (tg->params[i].kind == GENCONSTNESS)
+				variancequal(g, args[i].qual, sign * tg->params[i].variance, m);
+			else if (args[i].type)
+				variancetype(g, args[i].type, sign * tg->params[i].variance, m);
+		}
+		break;
+	}
+}
+
+/*
+Check the `+` and `-` markers on the parameters of the generic struct
+or union g against its members. Every place a parameter appears has a
+sign, the product of the signs of what it is nested in: a member, the
+target of a pointer to const, and the result of a function are
+positive, a parameter of a function is negative, the target of any
+other pointer is zero, and an argument for another struct has the sign
+of that struct's parameter. A parameter declared `+` must only appear
+in positive positions, and one declared `-` only in negative ones.
+*/
+void
+genvariancecheck(struct generic *g)
+{
+	struct member *m;
+
+	for (m = g->pattern->u.structunion.members; m; m = m->next) {
+		variancequal(g, m->qual, 1, m);
+		variancetype(g, m->type, 1, m);
+	}
 }
 
 /* arguments for g that are its own parameters */
@@ -614,12 +955,21 @@ closeangle(void)
 		expect(TGREATER, "to close type argument list");
 }
 
-/* parse a constness parameter as the argument for another constness parameter */
-static bool
-constarg(struct scope *s, enum typequal *q)
+/* parse an argument for a constness parameter: const, mut, or another constness parameter */
+bool
+genconstarg(struct scope *s, enum typequal *q)
 {
 	struct decl *d;
 
+	*q = QUALNONE;
+	if (consume(TCONST)) {
+		*q = QUALCONST;
+		return true;
+	}
+	if (tok.kind == C5_MUT) {
+		next();
+		return true;
+	}
 	if (tok.kind < TIDENT)
 		return false;
 	d = scopegetdecl(s, tokenstr(tok.kind), true);
@@ -658,11 +1008,7 @@ genargs(struct scope *s, struct generic *g, bool allowauto)
 			continue;
 		if (g->params[i].kind == GENCONSTNESS) {
 			args[i].constset = true;
-			if (consume(TCONST))
-				args[i].qual = QUALCONST;
-			else if (tok.kind == C5_MUT)
-				next();
-			else if (!constarg(s, &args[i].qual))
+			if (!genconstarg(s, &args[i].qual))
 				error(&tok.loc, "expected 'const', 'mut', or constness parameter for '%s'", g->params[i].name);
 			continue;
 		}
@@ -674,6 +1020,9 @@ genargs(struct scope *s, struct generic *g, bool allowauto)
 		t = typename(s, &q, NULL);
 		if (!t)
 			error(&tok.loc, "expected type for generic parameter '%s'", g->params[i].name);
+		/* a type parameter is never const, so that a value of its type can always be written */
+		if (q & QUALCONSTANT)
+			error(&tok.loc, "argument for type parameter '%s' cannot be const-qualified; constness is passed with a constness parameter", g->params[i].name);
 		args[i].type = t;
 		args[i].qual = q;
 	}
@@ -891,9 +1240,15 @@ geninstname(struct generic *g, struct genarg *args)
 	return buf.val;
 }
 
-/* the built-in generic struct that slice<T> is an instance of */
+/*
+The built-in generic struct that slices are instances of:
+
+	forall<constness +C, type T>
+	struct slice { C T *data; size_t length; };
+*/
 static struct generic *slicegen;
 
+/* the type of a slice of elements of type `elem`, which have the constness `qual` */
 struct type *
 mkslicetype(struct type *elem, enum typequal qual)
 {
@@ -903,15 +1258,21 @@ mkslicetype(struct type *elem, enum typequal qual)
 	struct type *t;
 	enum typequal q;
 
+	if (qual & ~QUALCONSTANT)
+		error(&tok.loc, "slice elements can only be qualified with const");
 	if (!slicegen) {
 		g = mkgeneric(false);
 		g->name = "slice";
-		g->nparam = 1;
-		g->params = xmalloc(sizeof(g->params[0]));
-		memset(g->params, 0, sizeof(g->params[0]));
-		g->params[0].kind = GENTYPE;
-		g->params[0].name = "T";
-		g->params[0].type = mkparamtype(g, 0, "T");
+		g->nparam = 2;
+		g->params = xreallocarray(NULL, 2, sizeof(g->params[0]));
+		memset(g->params, 0, 2 * sizeof(g->params[0]));
+		g->params[0].kind = GENCONSTNESS;
+		g->params[0].name = "C";
+		g->params[0].bit = QUALCPARAM0;
+		g->params[0].variance = 1;
+		g->params[1].kind = GENTYPE;
+		g->params[1].name = "T";
+		g->params[1].type = mkparamtype(g, 1, "T");
 		length = xmalloc(sizeof(*length));
 		memset(length, 0, sizeof(*length));
 		length->name = "length";
@@ -920,7 +1281,7 @@ mkslicetype(struct type *elem, enum typequal qual)
 		data = xmalloc(sizeof(*data));
 		memset(data, 0, sizeof(*data));
 		data->name = "data";
-		data->type = mkpointertype(g->params[0].type, QUALNONE);
+		data->type = mkpointertype(g->params[1].type, QUALCPARAM0);
 		data->next = length;
 		t = mktype(TYPESTRUCT, 0);
 		t->size = 16;
@@ -932,10 +1293,11 @@ mkslicetype(struct type *elem, enum typequal qual)
 		g->pattern = t;
 		slicegen = g;
 	}
-	args = xmalloc(sizeof(*args));
-	memset(args, 0, sizeof(*args));
-	args->type = elem;
-	args->qual = qual;
+	args = xreallocarray(NULL, 2, sizeof(*args));
+	memset(args, 0, 2 * sizeof(*args));
+	args[0].qual = constjoin(qual, QUALNONE);
+	args[0].constset = true;
+	args[1].type = elem;
 	q = QUALNONE;
 	return geninst(slicegen, args, &q);
 }
@@ -970,7 +1332,9 @@ genfresh(struct generic *g, struct genarg **args)
 Two-way unification, used to match the type of a given against the type
 of an implicit parameter. The types on either side may refer to the
 parameters of g[0] and g[1], which are bound in bind[0] and bind[1].
-Only type and size parameters are bound; qualifiers must agree.
+Only type and size parameters are bound; qualifiers must agree. In lax
+mode, constness is ignored, so that the types unify if they are const
+variants.
 */
 static int
 unifyvar(struct unifier *u, struct type *t)
@@ -1037,6 +1401,8 @@ arraylen(struct type *t)
 	return mkconstsize(t->base->size ? t->size / t->base->size : 0);
 }
 
+static struct genarg *partialargs(struct generic *, struct genarg *);
+
 static bool
 unifytypes(struct unifier *u, struct type *a, enum typequal aq, struct type *b, enum typequal bq, int depth)
 {
@@ -1049,6 +1415,10 @@ unifytypes(struct unifier *u, struct type *a, enum typequal aq, struct type *b, 
 
 	if (depth > 64)
 		return false;
+	if (u->lax) {
+		aq &= ~QUALCONSTANT;
+		bq &= ~QUALCONSTANT;
+	}
 	k = unifyvar(u, a);
 	if (k >= 0) {
 		bd = &u->bind[k][a->u.param.index];
@@ -1111,7 +1481,7 @@ unifytypes(struct unifier *u, struct type *a, enum typequal aq, struct type *b, 
 		for (i = 0; i < tg->nparam; ++i) {
 			switch (tg->params[i].kind) {
 			case GENCONSTNESS:
-				if (aargs[i].qual != bargs[i].qual)
+				if (!u->lax && aargs[i].qual != bargs[i].qual)
 					return false;
 				break;
 			case GENSIZE:
@@ -1133,6 +1503,15 @@ bool
 unify(struct unifier *u, struct type *a, enum typequal aq, struct type *b, enum typequal bq)
 {
 	return unifytypes(u, a, aq, b, bq, 0);
+}
+
+/* substitute the arguments for g that are known in `bind` into t */
+struct type *
+genpartial(struct generic *g, struct genarg *bind, struct type *t, enum typequal *tq)
+{
+	if (!typehasparam(t, g))
+		return t;
+	return typesubst(t, tq, g, partialargs(g, bind));
 }
 
 /* arguments for g where parameters not bound in `bind` stand for themselves */

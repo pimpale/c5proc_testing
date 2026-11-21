@@ -1,0 +1,8 @@
+forall<constness +C, constness +D> struct X { C int* a; D int* b; };
+forall<type -T> struct Sink { int (*put)(const T* v); };
+forall<type T> int put(const T* v, implicit Sink<T> s);
+int pa(const X<const, mut>* v);
+int pb(const X<mut, const>* v);
+given const Sink<X<const, mut>> A = { pa };
+given const Sink<X<mut, const>> B = { pb };
+int f(X<mut, mut>* v) { return put(v); }

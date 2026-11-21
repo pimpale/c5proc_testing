@@ -108,7 +108,7 @@ In `erased` code, you cannot use the variables to instantiate a mono body, since
 You can however instantiate mono structs behind pointers. Eg, declaring a variable like `Vec<T>*` is fine in erased code, as long as you don't try to access it. 
 
 In both mono and erased contexts, a captured type lacks all of its qualifiers. Therefore, `T` can never be a `const int`, for example. This is useful, because otherwise you would never be able to write to a value T because it could be const.
-Constness can be captured seperately (discussed later).
+Constness can be captured separately (discussed later).
 
 
 We'll get to `exists` in [a later section](#existential-types).
@@ -362,7 +362,7 @@ int* p = &x;
 const int* q = p;
 ```
 
-This is because every pointer to mut can be treated as a pointer to const. Going from mut to const is known as **covariance**.
+This is because every pointer to mut can be treated as a pointer to const. Going from mut to const is an instance of **covariance**.
 
 However, the following is not legal in C but is still theoretically valid:
 ```C
@@ -370,7 +370,14 @@ int read(const int* v);
 int (*f)(int*) = read;
 ```
 This is because a function that accepts a const pointer can also accept a mut pointer.
-In C5 though, this is valid. This relationship, going from a const param in a function to a mut param in a function is known as **contravariance**.
+In C5 though, this is valid. This relationship, going from a const param in a function to a mut param in a function is an instance of **contravariance**.
+
+Note that it is only function parameters that have the contravariance. Return types are covariant:
+```C
+int* read(int* v);
+const int* (*f)(int*) = read;
+```
+The above is illegal in C but legal in C5.
 
 #### Covariance and Contravariance in Structs
 C5 extends both of these relationships to structs.
@@ -398,9 +405,9 @@ Foo<const> constfoo = { .elem = mutfoo.elem };
 ```
 But as structs get more complex, this quickly gets annoying. We want a way to turn a `Foo<mut>` into a `Foo<const>` cleanly.
 
-In order to facilitate this, we can mark Foo's constness parameter as **covariant** using the `out` keyword: IE, any value of `Foo<mut>` can be converted to a `Foo<const>`:
+In order to facilitate this, we can mark Foo's constness parameter as **covariant** using the `+` operator before the parameter: IE, any value of `Foo<mut>` can be converted to a `Foo<const>`:
 ```C5
-forall<out constness C>
+forall<constness +C>
 struct Foo {
     C int* elem;
 };
@@ -421,9 +428,9 @@ struct Bar {
 Vec<Bar<mut>> myvec2;
 ```
 Here, `Bar<mut>` is actually less strict than `Bar<const>`, in the sense that any `Bar<const>` can be treated as a `Bar<mut>` without causing problems, for the same reason as in the second case in the above section.
-So, we should want a way to automatically convert `Bar<const>` to `Bar<mut>`. This is accomplished in C5 with the `in` keyword.
+So, we should want a way to automatically convert `Bar<const>` to `Bar<mut>`. This is accomplished in C5 with the `-` operator.
 ```C5
-forall<in constness C>
+forall<constness -C>
 struct Bar {
     int (*func)(C int* param);
 };
@@ -436,7 +443,7 @@ vec_push(&myvec2, c);
 
 But it's not just constness parameters that permit subtyping, but also type variables:
 ```C5
-forall<out type T>
+forall<type +T>
 struct View {
     const T* data;
     size_t len;
@@ -450,7 +457,7 @@ View<Foo<const>> cs = ms;
 and
 
 ```C5
-forall<in type T>
+forall<type -T>
 struct Show {
     void (*show)(const T* item);
 };
@@ -460,48 +467,66 @@ Show<Foo<const>> sc = { &show_const_foo };
 Show<Foo<mut>> sm = sc;
 ```
 
-Pointers to structs can convert too, but only to const pointers to the converted struct. This prevents soundness issues. A legal conversion can be:
+The `+` and `-` modifiers are not permitted on `exists` clauses, or in `forall` clauses on variables or functions. They are also not permitted on `size` parameters anywhere.
+
+
+Pointers to structs can convert too, but only to pointers to const of the converted struct. This prevents soundness issues. A legal conversion can be:
 ```C5
 Foo<mut> *a = &some_foo;
 // legal
 const Foo<const>* b = a;
 // illegal
-Foo<const>* b = a;
+Foo<const>* b2 = a;
 // because then you could do:
-*b = &some_const_foo;
-mutating_func(a);
+b2->elem = &some_const_int;  // allowed through Foo<const>
+*a->elem = 5;                // writes a const int through Foo<mut>
 ```
 
-When a parameter lacks either an `in` or `out` modifier, it is regarded as invariant, and cannot be converted one way or another. 
+When a parameter lacks either a `+` or `-` modifier, it is regarded as invariant, and cannot be converted one way or another. 
 
-However, both `in` and `out` marked type or constness parameters have restrictions on their uses:
-* `in` parameters can only appear in a function pointer's parameter types.
-* `out` parameters can appear as a member's type or qualifier, in a function pointer's return type.
-* Neither an `in` nor `out` marked parameter may appear behind a non-const pointer (for the same reason as illustrated above).
-* If you instantiate a sub-struct with type parameters, the modifier must match.
+However, both `+` and `-` marked type or constness parameters have restrictions on their uses. First we need to define some terminology:
+* Positive (covariant) positions are: a struct member's type or qualifier, the pointee of a pointer to const (eg, T is in covariant position in `const T* elem;`), or a function pointer's return type.
+* Negative (contravariant) positions are: a function pointer's parameter types.
+* Zero (invariant) positions are: the pointee of a pointer to mut (eg T in `T* elem;`).
+* An argument to a substruct acts as if it is in the position of that substruct's parameter declaration.
+   * Eg, if the substruct parameter is declared with `+`, it is in a positive position, and so on for negative and zero.
+* We use the term `substruct` for a parameterized struct that is instantiated within the struct. This substruct can appear in any location where a type is valid.
 
-Matching means at a high level:
-`in` is like a negative sign and `out` is like a positive sign. Nesting is like multiplication.
+Matching at a high level is like multiplying the signs of the positions. The sign of the parameter you use must match the product of the positions.
 
 An example:
 ```C5
-forall<out constness C> struct Foo { C int* elem; };
-forall<in constness C> struct Bar {    int (*func)(C int* param); };
-forall<out type T> struct View { const T* data; size_t len; };
-forall<type T>     struct Vec  { T* data; size_t len; };
-forall<in type T>  struct Show { void (*show)(const T* item); };
+forall<constness +C> struct Foo { C int* elem; };
+forall<constness -C> struct Bar  { int (*func)(C int* param); };
+forall<type +T>      struct View { const T* data; size_t len; };
+forall<type T>       struct Vec  { T* data; size_t len; };
+forall<type -T>      struct Show { void (*show)(const T* item); };
 
-forall<out constness C>
+forall<constness +C>
 struct Doc {
-    // out arg in out position
+    // + arg in + position
     View<Foo<C>> items;    // ok
 
     Vec<Foo<C>>  scratch;  // error: C is in an invariant position
     Show<Foo<C>> printer;  // error: C is in a contravariant position
 
-    // in arg in an in position (cancels out)
+    // - arg in a - position (cancels out)
     Show<Bar<C>> thing;    // ok
 };
+```
+
+Just like in C, pointers of any type may be cast to pointers to any other type, even pointers to const values can be cast to pointers to mut values.
+In these cases it is the user's responsibility to ensure that const data is not modified. Like in C, it is acceptable to to access data through these pointers.
+It is possible to write through these pointers too as long as the data was originally mutable.
+
+C doesn't permit any struct casting directly. C5 extends C by permitting struct values to be cast to any const-variant (that is, any struct that differs only in constness arguments at any depth) directly without going through the pointer cast:
+```C5
+Foo<mut> m = alloc_foo();
+Foo<const> c = m; // implicit conversion
+//error
+Foo<mut> m2 = c;
+// permitted with explicit cast
+Foo<mut> m3 = (Foo<const>)c;
 ```
 
 
@@ -510,7 +535,7 @@ struct Doc {
 C5 has three different kinds of entities that may be indexed with []:
 1. Classical C arrays: declared as `int x[5];`. These undergo decay in parameters, as before.
 2. Proper array types declared as `array<int, 5> x;`. These can be passed and returned by value, like arrays in structs.
-3. Finally, a slice type written as `slice<mut, int>`. Under the hood, it is a two element struct, with a pointer (`data`), followed by a `size_t` length field (`length`).
+3. Finally, a slice type written as `slice<mut, int>`. Under the hood, it is a two element struct, with a pointer (`data`), followed by a `size_t` length field (`length`). The pointee may be mut or const.
 
 #### C5 Arrays
 
@@ -519,16 +544,25 @@ Similarly, they are copied by value if doing `x = y`.
 
 However, they do decay if passed to a function accepting a pointer.
 
-#### Slicing
+#### C5 Slices
+The `slice` data structure effectively is defined as:
+```C5
+forall<constness +C, type T>
+struct slice {
+    C T* data;
+    size_t length;
+};
+```
+
 The primary purpose of the slice is to enable syntax sugar around dynamic slicing. It is explicitly a view of the data. Thus, passing it by value only passes the underlying array by reference.
-It also can basically replace the null terminated string in most contexts. slice<char> is pretty good. 
+It also can basically replace the null terminated string in most contexts. 
 You should use unicode functions where needed though, as chars are not code points.
 A slice's length can be accessed via .length, and the underlying data pointer via .data.
 Pointer arithmetic and indexing on a slice works as if on the .data component (specifically, `[]`, `+`, `-`). However, dereferencing does not work.
 
 Slices cannot be initialized via array initializer syntax though, as this conflicts with their struct based nature: 
 ```C5
-slice<int> x = {0}; // not a slice of [0]! Instead, a null slice (null ptr, 0 length)
+slice<mut, int> x = {0}; // not a slice of [0]! Instead, a null slice (null ptr, 0 length)
 ```
 
 A slice can be created explicitly via struct construction, or through slicing:
@@ -540,10 +574,10 @@ Slice ranges are inclusive. This is the same syntax used in C29 case ranges.
 The actual way to get a slice of [0] is:
 ```C5
 array<int, 1> y = { 0 };
-slice<int> x = y[...];
+slice<mut, int> x = y[...];
 ```
 
-There are no implicit conversions to slices.
+slice does not have any special conversions beyond the const-conversions that are possible for all structs.
 
 ### String Literals
 
@@ -828,8 +862,14 @@ int main() {
 ```
 
 ### Implicit Argument Priority
-We generally follow the lead of Scala in defining the selected instance as the one that is compatible at the deepest scope. Ties are broken by having the most specific compatible type.
-Specificity is a partial order on the givens' types. Type A is more specific than type B if A can be obtained from B by substituting for B's type variables, but not vice versa.
+We generally follow the lead of Scala in defining the selected instance as the one that is compatible at the deepest scope. 
+
+There are two tiers of tiebreakers:
+* Most specific at type variable substitution
+* Most general in terms of subtyping
+
+In the first level of tie-breaking, we select the most specific (wrt type variable substitution) compatible type.
+Type variable specificity is a partial order on the givens' types. Type A is more specific than type B if A can be obtained from B by substituting for B's type variables, but not vice versa.
 
 Examples:
 * `Eq<int>` is more specific than `Eq<T>`.
@@ -837,25 +877,34 @@ Examples:
 * `Eq<Pair<T, T>>` is more specific than `Eq<Pair<A, B>>`.
 * `Eq<Pair<int, U>>` and `Eq<Pair<T, int>>` are incomparable.
 
+If there are several remaining candidates at the same type-variable specificity level that are const variants of each other, the most general one is selected. That is, the candidate that the others convert to.
+This is a partial order as well, there can be incomparable cases like: `X<const, mut>` and `X<mut, const>`.
+
+Remaining ambiguity is an error.
+
 ### Implicit Arguments and Type Inference
 
 Suppose we have a call `f<type_args>(args, .overrides=overrides)`. Then:
 1. First, explicit type arguments take precedence. Either the list is omitted, or all arguments must be written, using `auto` for those to be inferred.
 2. Second, we infer from arguments. We unify the parameter type with the argument type. Before unification, the argument undergoes lvalue->rvalue conversion, and pointer decay if a standard C array. Top level qualifiers are dropped. 
-   * Implicit conversions are not considered, except for constness conversions. Const can also be captured via a constness qualifier. 
-   * Conflicting bindings are an error.
-   * We infer from left to right at the call site. Ordering of named parameters matters for whether resolution succeeds or not.
+    * Implicit type conversions (eg from int to float) are not considered yet at this stage.
+    * Const can be captured via a constness qualifier. If const is not captured, then passing a const type to a generic type not marked const is an error.
+    * We infer from left to right at the call site. Ordering of named parameters matters for whether resolution succeeds or not.
+    * For `type` and `size` parameters, the first occurrence sets the parameter.
+    * A constness parameter is `const` if any argument supplies `const` to it, ignoring occurrences in negative positions. Otherwise it is `mut`. 
 3. We then unify the return type of the call with the expected type (binding only the parameters that are still unknown), but only in the contexts: 
     * the right side of =
     * the operand of return
     * the whole initializer of a declaration with a concrete type.
     * In other contexts, this is skipped.
-4. Finally, we search for givens for the remaining implicit parameters:
-    * We collect all givens in scope whose type unifies with the parameter. For given functions, we collect those which have the return type unifying with the parameter.
-    * The candidate with the deepest scope that unifies is picked. If there are many candidates at the same scope level, the most specific candidate is selected. Remaining ambiguity is an error (see [Implicit Argument Priority](#implicit-argument-priority)).
+4. Then, we attempt conversions:
+    * Once all type parameters have been bound, for argument types that do not match the parameter type we check if we can convert it legally by applying the rules for [const conversion](#covariance-and-contravariance-in-structs). If this fails, we raise an error.
+    * At this stage, we also apply implicit data type conversions (eg, int to float) if needed. (Note: in a case where we have `forall<type T>T max(T a, T b)`, `max(2, 1.5f)` and `max(1.5f, 2)` bind different types.) 
+5. Finally, we search for givens for the remaining implicit parameters:
+    * We collect all givens in scope whose type unifies with the parameter. For given functions, we collect those which have the return type unifying with the parameter. We consider givens that can be implicitly const-converted into those of the correct type.
+    * The candidate with the deepest scope that unifies is picked. If there are many candidates at the same scope level, we use the implicit argument priority described above. Remaining ambiguity is an error (see [Implicit Argument Priority](#implicit-argument-priority)).
     * If the candidate is a given function with premises, we resolve those premises.
     * There is no backtracking.
-
 
 In both `erased` and `mono` contexts, the inference proceeds treating the type parameters as an opaque type. It only happens once per definition, not once per instantiation.
 
@@ -872,7 +921,7 @@ It has a canonical name:
 Eg, if we have:
 ```C5
 mono forall<type T, size N, constness C>
-C array<T, N> foo(C array<T, N> in) {
+C array<T, N>* foo(C array<T, N>* in) {
     return in;
 }
 ```
@@ -919,8 +968,6 @@ There are also contextual keywords:
     * type
     * size
     * constness
-    * in
-    * out
 * As the argument for a constness parameter
     * mut
 

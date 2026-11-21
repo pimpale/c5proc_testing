@@ -1,0 +1,2 @@
+const int* rd(int* v);
+int* (*f)(int*) = rd;

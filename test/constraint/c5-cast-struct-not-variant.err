@@ -1,0 +1,1 @@
+error: cast to 'Other' must be from a const variant of it, but the operand has type 'Foo<mut>'

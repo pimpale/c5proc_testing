@@ -1,0 +1,14 @@
+type :.1 = { l, l, }
+type :U.2 = { { l } { l } }
+type :.3 = { l, l, }
+type :U.4 = { { l } { l } }
+export
+function w $g(:.1 %.1, :U.2 %.2, l %.3) {
+@start.1
+	%.4 =l alloc8 8
+	storel %.3, %.4
+@body.2
+	%.5 =l loadl %.4
+	%.6 =w call extern $use(:.3 %.1, :U.4 %.2, l %.5)
+	ret %.6
+}

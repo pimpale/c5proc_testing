@@ -1,0 +1,1 @@
+void f(slice<const, int> c) { slice<mut, int> m = c; }

@@ -1,0 +1,3 @@
+forall<constness C> void each(int (*cb)(C int*), C int* p);
+int wr(int*);
+void f(const int* p) { each(wr, p); }

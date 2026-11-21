@@ -1,0 +1,1 @@
+error: parameter 'C' of 'find' cannot be marked '+': only parameters of a struct or union can be

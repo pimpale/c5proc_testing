@@ -1,0 +1,2 @@
+forall<constness C> void swap_ptrs(C int** a, C int** b);
+void f(int** m, const int** c) { swap_ptrs(m, c); }

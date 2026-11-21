@@ -1,0 +1,1 @@
+error: argument 1 of call to 'swap_ptrs' has type 'int**', but parameter 'a' has type 'const int**' (pointed-to types are const variants that do not convert; a pointer converts only to a pointer to const of a type its target converts to)

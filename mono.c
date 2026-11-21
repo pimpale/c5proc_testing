@@ -120,8 +120,9 @@ struct copy {
 
 /*
 Constness is always erased, so instances do not depend on it. Erase the
-constness arguments, and constness parameters of the context in the
-other arguments, by making them const.
+constness arguments, and the constness parameters of the context and
+constness arguments of structs in the other arguments, by making them
+const.
 */
 static struct genarg *
 eraseconst(struct generic *g, struct genarg *args)
@@ -152,6 +153,7 @@ eraseconst(struct generic *g, struct genarg *args)
 		} else if (n[i].type) {
 			n[i].qual = qualsubst(n[i].qual, anyconst, constargs);
 			n[i].type = typesubst(n[i].type, &n[i].qual, anyconst, constargs);
+			n[i].type = typeeraseconst(n[i].type);
 		}
 	}
 	return n;

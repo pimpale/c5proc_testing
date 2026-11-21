@@ -1,0 +1,66 @@
+int printf(const char *, ...);
+
+forall<constness +C> struct Foo { C int* elem; };
+forall<constness -C> struct Bar { int (*func)(C int* param); };
+forall<type +T> struct View { const T* data; unsigned long len; };
+forall<type T> struct Vec { T* data; unsigned long len; };
+forall<type -T> struct Show { int (*show)(const T* item); };
+
+forall<constness +C>
+struct Doc {
+	View<Foo<C>> items;
+	Show<Bar<C>> thing;
+};
+
+mono forall<type T> void vec_push(Vec<T>* v, T elem) { }
+forall<constness C> int eq(slice<C, char> a, slice<C, char> b) { return a.length == b.length; }
+mono forall<type T> T pick(T a, T b) { return a; }
+
+int readint(const int* v) { return *v; }
+int* same(int* v) { return v; }
+int showcf(const Foo<const>* f) { return *f->elem; }
+
+int sum(View<Foo<const>> v) {
+	int t = 0;
+	for (unsigned long i = 0; i < v.len; i++) t += *v.data[i].elem;
+	return t;
+}
+
+int main(void) {
+	int x = 5, y = 7;
+	const int cz = 9;
+	Foo<mut> m = { &x };
+	Foo<const> c = m;
+	Foo<const> c2 = { &cz };
+	Vec<Foo<const>> myvec = {0};
+	vec_push(&myvec, m);
+
+	/* function pointers */
+	int (*f)(int*) = readint;
+	const int* (*g)(int*) = same;
+
+	Bar<const> bc = { readint };
+	Bar<mut> bm = bc;
+
+	array<Foo<mut>, 2> arr = { {&x}, {&y} };
+	View<Foo<mut>> ms = { arr, 2 };
+	View<Foo<const>> cs = ms;
+
+	Show<Foo<const>> sc = { showcf };
+	Show<Foo<mut>> sm = sc;
+
+	Foo<mut>* a = &m;
+	const Foo<const>* b = a;
+
+	/* explicit cast */
+	Foo<mut> back = (Foo<mut>)c;
+
+	array<char, 3> buf = { 'a', 'b', 'c' };
+	slice<mut, char> ms2 = buf[...];
+	slice<const, char> cs2 = ms2;
+	int r = eq(ms2, cs2);
+	int r2 = eq(cs2, ms2);
+
+	printf(cn"%d %d %d %d %d %d %d %d %d\n", *c.elem, f(&x), *g(&y), bm.func(&x), sum(cs), sum(ms), sm.show(&m), *b->elem + *back.elem, r + r2);
+	return 0;
+}

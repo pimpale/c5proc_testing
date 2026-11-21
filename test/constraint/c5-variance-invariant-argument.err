@@ -1,0 +1,1 @@
+error: const variants of a struct or union convert only as the '+' and '-' markers on its parameters allow

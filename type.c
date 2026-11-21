@@ -138,11 +138,33 @@ typerank(struct type *t)
 	return -1;
 }
 
+/* whether two array types are of the same kind and may have the same length */
+bool
+typearraylensame(struct type *t1, struct type *t2)
+{
+	struct expr *e1, *e2;
+
+	if (t1->u.array.byvalue != t2->u.array.byvalue)
+		return false;
+	e1 = t1->u.array.length;
+	e2 = t2->u.array.length;
+	if (t1->u.array.byvalue) {
+		/* the length of a C5 array is always known, though it may depend on forall parameters */
+		if (e1 && e2)
+			return sizesame(e1, e2);
+		if ((t1->prop | t2->prop) & PROPDEPLEN)
+			return false;
+		return typedep(t1->base) || typedep(t2->base) || t1->size == t2->size;
+	}
+	if (t1->incomplete || t2->incomplete)
+		return true;
+	return !(e1 && e2 && e1->kind == EXPRCONST && e2->kind == EXPRCONST && e1->u.constant.u != e2->u.constant.u);
+}
+
 bool
 typecompatible(struct type *t1, struct type *t2)
 {
 	struct decl *p1, *p2;
-	struct expr *e1, *e2;
 
 	if (t1 == t2)
 		return true;
@@ -161,27 +183,7 @@ typecompatible(struct type *t1, struct type *t2)
 	case TYPEPOINTER:
 		goto derived;
 	case TYPEARRAY:
-		if (t1->u.array.byvalue != t2->u.array.byvalue)
-			return false;
-		if (t1->u.array.byvalue) {
-			/* the length of a C5 array is always known, though it may depend on forall parameters */
-			e1 = t1->u.array.length;
-			e2 = t2->u.array.length;
-			if (e1 && e2) {
-				if (!sizesame(e1, e2))
-					return false;
-			} else if ((t1->prop | t2->prop) & PROPDEPLEN) {
-				return false;
-			} else if (!typedep(t1->base) && !typedep(t2->base) && t1->size != t2->size) {
-				return false;
-			}
-			goto derived;
-		}
-		if (t1->incomplete || t2->incomplete)
-			goto derived;
-		e1 = t1->u.array.length;
-		e2 = t2->u.array.length;
-		if (e1 && e2 && e1->kind == EXPRCONST && e2->kind == EXPRCONST && e1->u.constant.u != e2->u.constant.u)
+		if (!typearraylensame(t1, t2))
 			return false;
 		goto derived;
 	case TYPEFUNC:

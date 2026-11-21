@@ -110,7 +110,7 @@ install: all
 	mkdir -p $(DESTDIR)$(MANDIR)/man1
 	cp cproc.1 $(DESTDIR)$(MANDIR)/man1
 	mkdir -p $(DESTDIR)$(PREFIX)/lib/cproc/include
-	cp include/c5.h $(DESTDIR)$(PREFIX)/lib/cproc/include
+	cp include/c5.h include/stddefer.h $(DESTDIR)$(PREFIX)/lib/cproc/include
 
 .PHONY: clean
 clean:

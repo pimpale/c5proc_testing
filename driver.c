@@ -362,26 +362,57 @@ nextarg(char ***argv)
 	return **argv;
 }
 
+static size_t
+selfpath(char *arg, char *self, size_t max)
+{
+	ssize_t n;
+
+	n = readlink("/proc/self/exe", self, max);
+	if (n == -1) {
+		n = strlen(arg);
+		if ((size_t)n > max)
+			fatal("argv[0] is too large");
+		memcpy(self, arg, n);
+	} else if ((size_t)n == max) {
+		fatal("target of /proc/self/exe is too large");
+	}
+	self[n] = '\0';
+	return n;
+}
+
 static char *
 compilecommand(char *arg)
 {
 	char self[PATH_MAX], *cmd;
 	size_t n;
 
-	n = readlink("/proc/self/exe", self, sizeof(self) - 5);
-	if (n == -1) {
-		n = strlen(arg);
-		if (n > sizeof(self) - 5)
-			fatal("argv[0] is too large");
-		memcpy(self, arg, n);
-	} else if (n == sizeof(self) - 5) {
-		fatal("target of /proc/self/exe is too large");
-	}
+	n = selfpath(arg, self, sizeof(self) - 5);
 	strcpy(self + n, "-qbe");
 	cmd = strdup(self);
 	if (!cmd)
 		fatal("strdup:");
 	return cmd;
+}
+
+/*
+The include directory beside the driver, so that the compiler's headers
+are found when it is run from its build directory without being installed.
+*/
+static char *
+localincludedir(char *arg)
+{
+	char self[PATH_MAX], *dir, *slash;
+	size_t n;
+
+	n = selfpath(arg, self, sizeof(self) - 1);
+	slash = strrchr(self, '/');
+	n = slash ? slash - self + 1 : 0;
+	dir = malloc(n + sizeof("include"));
+	if (!dir)
+		fatal("malloc:");
+	memcpy(dir, self, n);
+	strcpy(dir + n, "include");
+	return dir;
 }
 
 static int
@@ -404,6 +435,8 @@ main(int argc, char *argv[])
 
 	arrayaddbuf(&stages[PREPROCESS].cmd, preprocesscmd, sizeof(preprocesscmd));
 	/* headers provided by the compiler, such as c5.h */
+	arrayaddptr(&stages[PREPROCESS].cmd, "-isystem");
+	arrayaddptr(&stages[PREPROCESS].cmd, localincludedir(argv[0]));
 	arrayaddptr(&stages[PREPROCESS].cmd, "-isystem");
 	arrayaddptr(&stages[PREPROCESS].cmd, C5_INCLUDE_DIR);
 	arrayaddptr(&stages[COMPILE].cmd, compilecommand(argv[0]));

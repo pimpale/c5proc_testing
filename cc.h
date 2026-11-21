@@ -478,6 +478,7 @@ struct type *mkbitinttype(int width, bool sign);
 
 bool typecompatible(struct type *, struct type *);
 bool typesame(struct type *, struct type *);
+bool typearraylensame(struct type *, struct type *);
 struct type *typecomposite(struct type *, struct type *);
 struct type *typeunqual(struct type *, enum typequal *);
 struct type *typecommonreal(struct type *, unsigned, struct type *, unsigned);
@@ -514,6 +515,12 @@ struct genparam {
 	struct type *type;
 	/* qualifier bit for a constness parameter */
 	enum typequal bit;
+	/*
+	for a parameter of a struct or union, how its instances convert
+	when the argument changes constness: 1 if declared `+` (the same
+	way), -1 if declared `-` (the opposite way), 0 if not at all
+	*/
+	int variance;
 };
 
 /* parameters of a forall declaration */
@@ -549,6 +556,13 @@ char *geninstname(struct generic *, struct genarg *);
 struct type *typesubst(struct type *, enum typequal *, struct generic *, struct genarg *);
 struct type *geninst(struct generic *, struct genarg *, enum typequal *);
 bool genunify(struct generic *, struct genarg *, struct type *, enum typequal, struct type *, enum typequal);
+void genscanconst(struct generic *, struct genarg *, struct type *, struct type *, int);
+struct type *genpartial(struct generic *, struct genarg *, struct type *, enum typequal *);
+bool genconstarg(struct scope *, enum typequal *);
+void genvariancecheck(struct generic *);
+bool typeconstvariant(struct type *, struct type *);
+bool typeconstconv(struct type *, struct type *);
+struct type *typeeraseconst(struct type *);
 struct genarg *genargs(struct scope *, struct generic *, bool);
 struct genarg *genidentity(struct generic *);
 struct expr *mksizeparamexpr(struct generic *, size_t);
@@ -568,6 +582,8 @@ char *typespelling(struct type *, enum typequal);
 struct unifier {
 	struct generic *g[2];
 	struct genarg *bind[2];
+	/* ignore differences in constness, which are checked afterwards by conversion */
+	bool lax;
 };
 
 bool unify(struct unifier *, struct type *, enum typequal, struct type *, enum typequal);

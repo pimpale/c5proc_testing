@@ -1,1 +1,1 @@
-error: cannot infer type arguments of 'pick' from argument 2: it has type 'double*', which is inconsistent with parameter type 'T*' and the earlier arguments
+error: argument 2 of call to 'pick' has type 'double*', but parameter 'b' has type 'int*' (base types of pointer assignment must be compatible or void)

@@ -1,0 +1,1 @@
+slice<mut, const int> s;

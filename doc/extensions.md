@@ -54,7 +54,7 @@ of registration, after the value of a `return` expression is computed.
 Jumping out of a deferred statement, or into the scope of a defer
 statement past the statement itself, is an error.
 
-The `<stddefer.h>` header defining `defer` is not provided.
+The `<stddefer.h>` header defines `defer` as a macro for `_Defer`.
 
 [TS 25755]: https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3434.htm
 

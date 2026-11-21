@@ -1,0 +1,47 @@
+int printf(const char *, ...);
+forall<constness +C> struct Foo { C int* elem; };
+forall<type -T> struct Show { int (*show)(const T* item); };
+forall<type +T> struct Src { T (*get)(void); };
+forall<constness +C> struct Box { C int* p; };
+
+int showc(const Foo<const>* f) { return *f->elem; }
+int showm(const Foo<mut>* f) { return 100 + *f->elem; }
+
+forall<type T> int show(const T* v, implicit Show<T> s) { return s.show(v); }
+forall<type T> int showp(const T* v, implicit const Show<T>* s) { return s->show(v); }
+
+int showbox(const Box<mut>* b) { return 1000 + *b->p; }
+int showboxc(const Box<const>* b) { return 2000 + *b->p; }
+
+mono forall<type T> int dup(T a, T b) { return 1; }
+mono forall<type T> T first(T a, T b) { return a; }
+
+int main(void) {
+	int x = 5;
+	Foo<mut> m = { &x };
+	Foo<const> c = { &x };
+	Box<mut> bm = { &x };
+	int r1, r2, r3, r4, r5, r6;
+	{
+		/* only a const instance: serves both */
+		given const Show<Foo<const>> SC = { showc };
+		r1 = show(&m);
+		r2 = show(&c);
+		r5 = showp(&m);
+	}
+	{
+		/* both in scope: the most general for the request wins */
+		given const Show<Foo<const>> SC = { showc };
+		given const Show<Foo<mut>> SM = { showm };
+		r3 = show(&m);
+		r4 = show(&c);
+	}
+	{
+		given const Show<Box<mut>> BM = { showbox };
+		given const Show<Box<const>> BC = { showboxc };
+		r6 = show(&bm);
+	}
+	Foo<const> fc = first(c, m);
+	printf(cn"%d %d %d %d %d %d %d %d\n", r1, r2, r3, r4, r5, r6, dup(m, m) + dup(c, c), *fc.elem);
+	return 0;
+}

@@ -1,0 +1,3 @@
+forall<constness +C> struct Foo { C int* elem; };
+forall<type T> struct Vec { T* data; unsigned long len; };
+forall<constness +C> struct Doc { Vec<Foo<C>> scratch; };

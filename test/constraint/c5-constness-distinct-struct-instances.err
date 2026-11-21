@@ -1,1 +1,1 @@
-error: assignment to struct type must be from compatible type
+error: argument 1 of call to 'f' has type 'V<const>', but parameter 'v' has type 'V<mut>' (assignment to struct type must be from compatible type)

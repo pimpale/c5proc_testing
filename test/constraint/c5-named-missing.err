@@ -1,1 +1,1 @@
-error: not enough arguments for function call
+error: not enough arguments for function call to 'f': no argument for parameter 'a' of type 'int'

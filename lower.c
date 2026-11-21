@@ -275,5 +275,8 @@ lowerstmt(struct func *f, struct stmt *st)
 void
 lower(struct func *f, struct stmt *body)
 {
+	/* the body may contain placeholders for invalid expressions */
+	if (nerrors)
+		return;
 	lowerstmts(f, body);
 }

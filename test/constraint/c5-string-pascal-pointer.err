@@ -1,1 +1,1 @@
-error: base types of pointer assignment must be compatible or void
+error: argument 1 of call to 'puts' has type 'unsigned char*', but parameter has type 'const char*' (base types of pointer assignment must be compatible or void)

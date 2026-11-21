@@ -237,60 +237,96 @@ nullpointer(struct expr *e)
 	return e->u.constant.u == 0;
 }
 
-struct expr *
-exprassign(struct expr *e, struct type *t)
+/*
+Check that e can be assigned to an object of type t. If it can't,
+return a description of the violated constraint.
+*/
+static const char *
+assigncheck(struct expr *e, struct type *t)
 {
+	static char buf[256];
 	struct type *et;
 
 	et = e->type;
 	switch (t->kind) {
 	case TYPEBOOL:
 		if (!(et->prop & PROPARITH) && et->kind != TYPEPOINTER && et->kind != TYPENULLPTR)
-			error(&tok.loc, "assignment to bool must be from arithmetic, pointer, or nullptr_t type");
+			return "assignment to bool must be from arithmetic, pointer, or nullptr_t type";
 		break;
 	case TYPEPOINTER:
 		if (nullpointer(e))
 			break;
 		if (et->kind != TYPEPOINTER)
-			error(&tok.loc, "assignment to pointer must be from pointer or null pointer constant");
+			return "assignment to pointer must be from pointer or null pointer constant";
 		if (t->base != &typevoid && et->base != &typevoid && !typecompatible(t->base, et->base))
-			error(&tok.loc, "base types of pointer assignment must be compatible or void");
+			return "base types of pointer assignment must be compatible or void";
 		if (!qualsubset(et->qual, t->qual))
-			error(&tok.loc, "assignment to pointer discards qualifiers");
+			return "assignment to pointer discards qualifiers";
 		break;
 	case TYPENULLPTR:
 		if (!nullpointer(e))
-			error(&tok.loc, "assignment to nullptr_t must be from null pointer constant or expression with type nullptr_t");
+			return "assignment to nullptr_t must be from null pointer constant or expression with type nullptr_t";
 		break;
 	case TYPESTRUCT:
 	case TYPEUNION:
 		if (typecompatible(t, et))
 			break;
 		/* a slice converts to a slice of the same elements with more qualifiers */
-		if (typeisslice(t) && typeisslice(et) && typecompatible(t->u.structunion.genargs[0].type, et->u.structunion.genargs[0].type) && qualsubset(et->u.structunion.genargs[0].qual, t->u.structunion.genargs[0].qual)) {
-			if (e->kind == EXPRCOMPOUND) {
-				e->type = t;
-				e->u.compound.decl->type = t;
-				return e;
-			}
-			return mkexpr(EXPRCAST, t, e);
-		}
-		error(&tok.loc, "assignment to %s type must be from compatible type", t->kind == TYPEUNION ? "union" : "struct");
-		break;
+		if (typeisslice(t) && typeisslice(et) && typecompatible(t->u.structunion.genargs[0].type, et->u.structunion.genargs[0].type) && qualsubset(et->u.structunion.genargs[0].qual, t->u.structunion.genargs[0].qual))
+			break;
+		return t->kind == TYPEUNION ? "assignment to union type must be from compatible type" : "assignment to struct type must be from compatible type";
 	case TYPEPARAM:
-		if (t != et)
-			error(&tok.loc, "assignment to type parameter '%s' must be from the same type", t->u.param.name);
+		if (t != et) {
+			snprintf(buf, sizeof(buf), "assignment to type parameter '%s' must be from the same type", t->u.param.name);
+			return buf;
+		}
 		break;
 	case TYPEARRAY:
 		e = exprunarray(e);
 		if (!t->u.array.byvalue || !e || !typecompatible(t, e->type))
-			error(&tok.loc, "assignment to array type must be from compatible array type");
-		return e;
+			return "assignment to array type must be from compatible array type";
+		break;
 	default:
 		assert(t->prop & PROPARITH);
 		if (!(et->prop & PROPARITH))
-			error(&tok.loc, "assignment to arithmetic type must be from arithmetic type");
+			return "assignment to arithmetic type must be from arithmetic type";
 		break;
+	}
+	return NULL;
+}
+
+/* stands in for an expression that could not be assigned to type t, after the error is reported */
+static struct expr *
+assignrecover(struct type *t)
+{
+	if (t->prop & PROPSCALAR)
+		return mkconstexpr(t, 0);
+	return exprtemp(t);
+}
+
+struct expr *
+exprassign(struct expr *e, struct type *t)
+{
+	const char *err;
+
+	err = assigncheck(e, t);
+	if (err) {
+		softerror(&tok.loc, "%s", err);
+		return assignrecover(t);
+	}
+	switch (t->kind) {
+	case TYPESTRUCT:
+	case TYPEUNION:
+		if (typecompatible(t, e->type))
+			break;
+		if (e->kind == EXPRCOMPOUND) {
+			e->type = t;
+			e->u.compound.decl->type = t;
+			return e;
+		}
+		return mkexpr(EXPRCAST, t, e);
+	case TYPEARRAY:
+		return exprunarray(e);
 	}
 	return exprconvert(e, t);
 }
@@ -1299,9 +1335,11 @@ struct callarg {
 	/* parameter name, or NULL for a positional argument */
 	char *name;
 	struct expr *expr;
+	/* where the argument starts */
+	struct location loc;
 };
 
-static struct expr *mkcall(struct scope *, struct expr *, struct callarg *, size_t, struct type *);
+static struct expr *mkcall(struct scope *, struct expr *, struct callarg *, size_t, struct type *, const struct location *);
 
 /* a given that can be used for an implicit parameter */
 struct givencand {
@@ -1524,7 +1562,7 @@ resolvegiven(struct scope *s, struct generic *g, struct genarg *bind, struct typ
 	if (ngoals == countof(goals))
 		error(&tok.loc, "resolving implicit parameter '%s' of '%s' requires too many given functions", param, func);
 	goals[ngoals++] = t;
-	e = mkcall(s, decay(e), NULL, 0, NULL);
+	e = mkcall(s, decay(e), NULL, 0, NULL, &tok.loc);
 	--ngoals;
 	if (c->byaddr)
 		e = mkunaryexpr(TBAND, mktempobj(s, e));
@@ -1542,17 +1580,18 @@ Implicit parameters that were not passed by name are resolved from the
 givens in scope.
 */
 static struct expr *
-mkcall(struct scope *s, struct expr *r, struct callarg *args, size_t nargs, struct type *expected)
+mkcall(struct scope *s, struct expr *r, struct callarg *args, size_t nargs, struct type *expected, const struct location *loc)
 {
 	struct decl *fd, *p, **params;
 	struct generic *g;
 	struct genarg *bind, *try;
 	struct expr *e, **slots, **end, *a, *extra, **extraend;
 	struct type *t, *at;
-	size_t i, pi, nparam, *argparam;
+	size_t i, pi, nparam, *argparam, *slotarg;
+	const char *err, *fname;
 
 	if (r->type->kind != TYPEPOINTER || r->type->base->kind != TYPEFUNC)
-		error(&tok.loc, "called object is not a function");
+		error(loc, "called object is not a function");
 	/* implicit parameters only apply when the function is called by name */
 	fd = NULL;
 	if (r->decayed && r->base->kind == EXPRIDENT && r->base->u.ident.decl->kind == DECLFUNC)
@@ -1572,9 +1611,13 @@ mkcall(struct scope *s, struct expr *r, struct callarg *args, size_t nargs, stru
 	params = xreallocarray(NULL, nparam + 1, sizeof(*params));
 	slots = xreallocarray(NULL, nparam + 1, sizeof(*slots));
 	argparam = xreallocarray(NULL, nargs + 1, sizeof(*argparam));
+	/* the argument written for each parameter, or -1 */
+	slotarg = xreallocarray(NULL, nparam + 1, sizeof(*slotarg));
+	fname = fd ? fd->name : NULL;
 	for (p = t->u.func.params, pi = 0; p; p = p->next, ++pi) {
 		params[pi] = p;
 		slots[pi] = NULL;
+		slotarg[pi] = -1;
 	}
 	extra = NULL;
 	extraend = &extra;
@@ -1583,14 +1626,28 @@ mkcall(struct scope *s, struct expr *r, struct callarg *args, size_t nargs, stru
 		while (fd && pi < nparam && params[pi]->implicit)
 			++pi;
 		if (pi == nparam) {
-			if (!t->u.func.isvararg)
-				error(&tok.loc, "too many arguments for function call");
+			if (!t->u.func.isvararg) {
+				size_t want, got;
+
+				for (want = 0, pi = 0; pi < nparam; ++pi)
+					want += !(fd && params[pi]->implicit);
+				for (got = 0; got < nargs && !args[got].name; ++got)
+					;
+				softerror(&args[i].loc, "too many arguments for function call%s%s%s: expected %zu, but got %zu", fname ? " to '" : "", fname ? fname : "", fname ? "'" : "", want, got);
+				/* the surplus arguments are dropped */
+				for (; i < nargs && !args[i].name; ++i)
+					argparam[i] = -1;
+				--i;
+				pi = nparam;
+				continue;
+			}
 			argparam[i] = -1;
 			*extraend = args[i].expr;
 			extraend = &args[i].expr->next;
 			continue;
 		}
 		argparam[i] = pi;
+		slotarg[pi] = i;
 		slots[pi++] = args[i].expr;
 	}
 	for (; i < nargs; ++i) {
@@ -1599,10 +1656,11 @@ mkcall(struct scope *s, struct expr *r, struct callarg *args, size_t nargs, stru
 				break;
 		}
 		if (pi == nparam)
-			error(&tok.loc, "function has no parameter named '%s'", args[i].name);
+			error(&args[i].loc, "function has no parameter named '%s'", args[i].name);
 		if (slots[pi])
-			error(&tok.loc, "parameter '%s' is given more than one argument", args[i].name);
+			error(&args[i].loc, "parameter '%s' is given more than one argument", args[i].name);
 		argparam[i] = pi;
+		slotarg[pi] = i;
 		slots[pi] = args[i].expr;
 	}
 	*extraend = NULL;
@@ -1617,7 +1675,7 @@ mkcall(struct scope *s, struct expr *r, struct callarg *args, size_t nargs, stru
 			if (p->type->kind == TYPEARRAY && exprunarray(a))
 				at = a->base->type;
 			if (!genunify(g, bind, p->type, p->qual, at, QUALNONE))
-				error(&tok.loc, "cannot infer type arguments of '%s' from argument %zu", fd->name, i + 1);
+				error(&args[i].loc, "cannot infer type arguments of '%s' from argument %zu: it has type '%s', which is inconsistent with parameter type '%s' and the earlier arguments", fd->name, i + 1, typespelling(at, QUALNONE), typespelling(p->type, p->qual));
 		}
 		/* then from the type expected of the result, where that determines more */
 		if (expected) {
@@ -1634,7 +1692,7 @@ mkcall(struct scope *s, struct expr *r, struct callarg *args, size_t nargs, stru
 		}
 		for (i = 0; i < g->nparam; ++i) {
 			if (!bind[i].type && !bind[i].size && !bind[i].constset)
-				error(&tok.loc, "cannot infer %s parameter '%s' of '%s'", g->params[i].kind == GENSIZE ? "size" : g->params[i].kind == GENCONSTNESS ? "constness" : "type", g->params[i].name, fd->name);
+				error(loc, "cannot infer %s parameter '%s' of '%s'", g->params[i].kind == GENSIZE ? "size" : g->params[i].kind == GENCONSTNESS ? "constness" : "type", g->params[i].name, fd->name);
 		}
 		genbind(r->base, bind);
 		r->type = mkpointertype(r->base->type, QUALNONE);
@@ -1652,9 +1710,38 @@ mkcall(struct scope *s, struct expr *r, struct callarg *args, size_t nargs, stru
 	e->u.call.nargs = 0;
 	end = &e->u.call.args;
 	for (pi = 0; pi < nparam; ++pi) {
-		if (!slots[pi])
-			error(&tok.loc, "not enough arguments for function call");
-		a = exprassign(slots[pi], params[pi]->type);
+		if (!slots[pi]) {
+			if (params[pi]->name)
+				softerror(loc, "not enough arguments for function call%s%s%s: no argument for parameter '%s' of type '%s'", fname ? " to '" : "", fname ? fname : "", fname ? "'" : "", params[pi]->name, typespelling(params[pi]->type, params[pi]->qual));
+			else
+				softerror(loc, "not enough arguments for function call%s%s%s: no argument for parameter %zu of type '%s'", fname ? " to '" : "", fname ? fname : "", fname ? "'" : "", pi + 1, typespelling(params[pi]->type, params[pi]->qual));
+			slots[pi] = assignrecover(params[pi]->type);
+		}
+		err = assigncheck(slots[pi], params[pi]->type);
+		if (err) {
+			char what[64], *pname;
+			const struct location *aloc;
+
+			aloc = loc;
+			pname = params[pi]->name;
+			if (slotarg[pi] == -1) {
+				snprintf(what, sizeof(what), "the given for implicit parameter");
+			} else {
+				aloc = &args[slotarg[pi]].loc;
+				snprintf(what, sizeof(what), "argument %zu", slotarg[pi] + 1);
+			}
+			at = slots[pi]->type;
+			if (params[pi]->type->kind == TYPEARRAY && exprunarray(slots[pi]))
+				at = exprunarray(slots[pi])->type;
+			softerror(aloc, "%s%s%s%s has type '%s', but parameter%s%s%s has type '%s' (%s)",
+				what, fname ? " of call to '" : "", fname ? fname : "", fname ? "'" : "",
+				typespelling(at, QUALNONE),
+				pname ? " '" : "", pname ? pname : "", pname ? "'" : "",
+				typespelling(params[pi]->type, QUALNONE), err);
+			a = assignrecover(params[pi]->type);
+		} else {
+			a = exprassign(slots[pi], params[pi]->type);
+		}
 		*end = a;
 		end = &a->next;
 		++e->u.call.nargs;
@@ -1671,6 +1758,7 @@ mkcall(struct scope *s, struct expr *r, struct callarg *args, size_t nargs, stru
 	free(params);
 	free(slots);
 	free(argparam);
+	free(slotarg);
 	return decay(e);
 }
 
@@ -1842,6 +1930,7 @@ postfixexpr(struct scope *s, struct expr *r)
 	bool lvalue, named;
 	struct array args;
 	struct callarg *arg;
+	struct location callloc;
 
 	if (!r)
 		r = primaryexpr(s);
@@ -1878,6 +1967,7 @@ postfixexpr(struct scope *s, struct expr *r)
 			expect(TRBRACK, "after array index");
 			break;
 		case TLPAREN:  /* function call */
+			callloc = tok.loc;
 			next();
 			if (r->kind == EXPRIDENT && r->u.ident.decl->kind == DECLBUILTIN) {
 				e = builtinfunc(s, r->u.ident.decl->u.builtin);
@@ -1896,6 +1986,7 @@ postfixexpr(struct scope *s, struct expr *r)
 					expect(TCOMMA, "or ')' after function call argument");
 				arg = arrayadd(&args, sizeof(*arg));
 				arg->name = NULL;
+				arg->loc = tok.loc;
 				if (consume(TPERIOD)) {
 					arg->name = expect(TIDENT, "for argument name");
 					expect(TASSIGN, "after argument name");
@@ -1916,7 +2007,7 @@ postfixexpr(struct scope *s, struct expr *r)
 			default:
 				expected = NULL;
 			}
-			e = mkcall(s, r, args.val, args.len / sizeof(*arg), expected);
+			e = mkcall(s, r, args.val, args.len / sizeof(*arg), expected, &callloc);
 			free(args.val);
 			break;
 		case TPERIOD:
@@ -1938,7 +2029,7 @@ postfixexpr(struct scope *s, struct expr *r)
 			offset = 0;
 			m = typemember(t, tokenstr(tok.kind), &offset);
 			if (!m)
-				error(&tok.loc, "struct/union has no member named '%s'", tok.lit);
+				error(&tok.loc, "%s has no member named '%s'", t->kind == TYPEUNION ? "union" : "struct", tokenstr(tok.kind));
 			/* each value has its own types for existential parameters, which are only named by destructuring it */
 			if (t->u.structunion.exists && typehasparam(m->type, t->u.structunion.exists))
 				error(&tok.loc, "member '%s' has an existential type, so it can only be accessed by destructuring", m->name);
@@ -2405,9 +2496,9 @@ assignexpr(struct scope *s)
 		l = arr;
 	}
 	if (l->qual & QUALCONSTANT)
-		error(&tok.loc, "assignment to const qualified object");
-	if (!l->lvalue)
-		error(&tok.loc, "left side of assignment expression is not an lvalue");
+		softerror(&tok.loc, "assignment to const qualified object");
+	else if (!l->lvalue)
+		softerror(&tok.loc, "left side of assignment expression is not an lvalue");
 	next();
 	if (!op)
 		exprexpect(l->type);

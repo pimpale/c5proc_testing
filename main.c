@@ -63,9 +63,14 @@ main(int argc, char *argv[])
 				error(&tok.loc, "expected declaration or function definition");
 			}
 		}
-		emitmonoinsts();
-		emittentativedefns();
+		/* instances are only checked once the code they are made from is valid */
+		if (!nerrors) {
+			emitmonoinsts();
+			emittentativedefns();
+		}
 	}
+	if (nerrors)
+		return 1;
 
 	fflush(stdout);
 	if (ferror(stdout))

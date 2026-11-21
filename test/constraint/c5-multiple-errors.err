@@ -1,0 +1,12 @@
+error: assignment to arithmetic type must be from arithmetic type
+error: assignment to pointer discards qualifiers
+error: argument 1 of call to 'g' has type 'B*', but parameter 'a' has type 'A*' (base types of pointer assignment must be compatible or void)
+error: argument 2 of call to 'g' has type 'int', but parameter 'name' has type 'const char*' (assignment to pointer must be from pointer or null pointer constant)
+error: argument 3 of call to 'g' has type 'A', but parameter 'n' has type 'int' (assignment to arithmetic type must be from arithmetic type)
+error: not enough arguments for function call to 'g': no argument for parameter 'name' of type 'const char*'
+error: not enough arguments for function call to 'g': no argument for parameter 'n' of type 'int'
+error: too many arguments for function call to 'g': expected 3, but got 4
+error: assignment to const qualified object
+error: assignment to struct type must be from compatible type
+error: base types of pointer assignment must be compatible or void
+error: assignment to arithmetic type must be from arithmetic type

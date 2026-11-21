@@ -1,1 +1,1 @@
-error: base types of pointer assignment must be compatible or void
+error: argument 1 has type 'D#2*', but parameter has type 'D#1*' (base types of pointer assignment must be compatible or void)

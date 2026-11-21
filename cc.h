@@ -433,6 +433,13 @@ char *tokenstr(enum tokenkind);
 char *tokencheck(const struct token *, enum tokenkind, const char *);
 void diagloc(const struct location *);
 noreturn void error(const struct location *, const char *, ...);
+/*
+Report an error and continue, so that later errors are reported as
+well. The caller must recover with something later checks can use;
+no code is generated once an error has been reported.
+*/
+void softerror(const struct location *, const char *, ...);
+extern unsigned nerrors;
 /* called after an error is reported, to add notes */
 extern void (*errornotes)(void);
 

@@ -1377,6 +1377,8 @@ emitfunc(struct func *f, bool global)
 	struct decl *p;
 	struct value *v;
 
+	if (nerrors)
+		return;
 	if (f->end->jump.kind == JUMP_NONE) {
 		v = NULL;
 		/* implicitly return 0 from main if we reach the end of the function */
@@ -1502,6 +1504,8 @@ emitdata(struct decl *d, struct init *init)
 	size_t i;
 	int align;
 
+	if (nerrors)
+		return;
 	align = d->u.obj.align;
 	for (cur = init; cur; cur = cur->next)
 		cur->expr = eval(cur->expr);

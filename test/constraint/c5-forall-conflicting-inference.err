@@ -1,1 +1,1 @@
-error: cannot infer type arguments of 'pick' from argument 2
+error: cannot infer type arguments of 'pick' from argument 2: it has type 'double*', which is inconsistent with parameter type 'T*' and the earlier arguments

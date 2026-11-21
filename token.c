@@ -163,6 +163,31 @@ diagloc(const struct location *loc)
 
 void (*errornotes)(void);
 
+unsigned nerrors;
+
+enum {
+	MAXERRORS = 20,
+};
+
+void
+softerror(const struct location *loc, const char *fmt, ...)
+{
+	va_list ap;
+
+	diagloc(loc);
+	fputs("error: ", stderr);
+	va_start(ap, fmt);
+	vfprintf(stderr, fmt, ap);
+	va_end(ap);
+	putc('\n', stderr);
+	if (errornotes)
+		errornotes();
+	if (++nerrors == MAXERRORS) {
+		fputs("too many errors\n", stderr);
+		exit(1);
+	}
+}
+
 void
 error(const struct location *loc, const char *fmt, ...)
 {

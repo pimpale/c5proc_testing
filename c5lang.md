@@ -107,6 +107,9 @@ void* add(void* a, void* b, Add add_vtable) {
 In `erased` code, you cannot use the variables to instantiate a mono body, since instantiation requires information that doesn't exist at this point, like the size and alignment of the type.
 You can however instantiate mono structs behind pointers. Eg, declaring a variable like `Vec<T>*` is fine in erased code, as long as you don't try to access it. 
 
+In both mono and erased contexts, a captured type lacks all of its qualifiers. Therefore, `T` can never be a `const int`, for example. This is useful, because otherwise you would never be able to write to a value T because it could be const.
+Constness can be captured seperately (discussed later).
+
 
 We'll get to `exists` in [a later section](#existential-types).
 
@@ -346,12 +349,168 @@ C char* strchr(C char* in, int c);
 ```
 This has essentially the same behavior, but is better integrated with the polymorphism system declared earlier.
 
+Constness has another important property: subtyping. Specifically, a mut value can always be treated as a const value (just don't modify it) so mut is a subtype of const.
+This is why in C we are allowed to pass a mut pointer to a function that takes a const pointer.
+
+This subtyping relationship shows up in the type system in a few ways:
+
+#### Covariance and Contravariance in Pointers
+In C, the following is legal:
+```C
+int x;
+int* p = &x;
+const int* q = p;
+```
+
+This is because every pointer to mut can be treated as a pointer to const. Going from mut to const is known as **covariance**.
+
+However, the following is not legal in C but is still theoretically valid:
+```C
+int read(const int* v);
+int (*f)(int*) = read;
+```
+This is because a function that accepts a const pointer can also accept a mut pointer.
+In C5 though, this is valid. This relationship, going from a const param in a function to a mut param in a function is known as **contravariance**.
+
+#### Covariance and Contravariance in Structs
+C5 extends both of these relationships to structs.
+
+Suppose we have a vector of potentially const structs.
+```C5
+forall<constness C>
+struct Foo {
+    C int* elem;
+};
+
+forall<type T>
+struct Vec {
+    T* data;
+    size_t len;
+};
+
+Vec<Foo<const>> myvec;
+```
+It's annoying that if we have a vector of `Foo<const>`, we can't append a mutable foo, even though any given element of myvec can only be treated as a `Foo<const>`.
+
+We can always create a const Foo relying on pointer conversion like so:
+```C5
+Foo<const> constfoo = { .elem = mutfoo.elem };
+```
+But as structs get more complex, this quickly gets annoying. We want a way to turn a `Foo<mut>` into a `Foo<const>` cleanly.
+
+In order to facilitate this, we can mark Foo's constness parameter as **covariant** using the `out` keyword: IE, any value of `Foo<mut>` can be converted to a `Foo<const>`:
+```C5
+forall<out constness C>
+struct Foo {
+    C int* elem;
+};
+
+Foo<mut> m = alloc_foo();
+// legal now
+Foo<const> c = m;
+vec_push(&myvec, m);
+```
+
+There is another case though: **contravariance**:
+```C5
+forall<constness C>
+struct Bar {
+    int (*func)(C int* param);
+};
+
+Vec<Bar<mut>> myvec2;
+```
+Here, `Bar<mut>` is actually less strict than `Bar<const>`, in the sense that any `Bar<const>` can be treated as a `Bar<mut>` without causing problems, for the same reason as in the second case in the above section.
+So, we should want a way to automatically convert `Bar<const>` to `Bar<mut>`. This is accomplished in C5 with the `in` keyword.
+```C5
+forall<in constness C>
+struct Bar {
+    int (*func)(C int* param);
+};
+
+Bar<const> c = { &my_readonly_func };
+// legal now
+Bar<mut> m = c;
+vec_push(&myvec2, c);
+```
+
+But it's not just constness parameters that permit subtyping, but also type variables:
+```C5
+forall<out type T>
+struct View {
+    const T* data;
+    size_t len;
+};
+
+View<Foo<mut>> ms = ...;
+// legal: every mutable element can be treated as a const element
+View<Foo<const>> cs = ms;
+```
+
+and
+
+```C5
+forall<in type T>
+struct Show {
+    void (*show)(const T* item);
+};
+
+Show<Foo<const>> sc = { &show_const_foo };
+// legal: a function that can show a Foo<const> can show a Foo<mut>
+Show<Foo<mut>> sm = sc;
+```
+
+Pointers to structs can convert too, but only to const pointers to the converted struct. This prevents soundness issues. A legal conversion can be:
+```C5
+Foo<mut> *a = &some_foo;
+// legal
+const Foo<const>* b = a;
+// illegal
+Foo<const>* b = a;
+// because then you could do:
+*b = &some_const_foo;
+mutating_func(a);
+```
+
+When a parameter lacks either an `in` or `out` modifier, it is regarded as invariant, and cannot be converted one way or another. 
+
+However, both `in` and `out` marked type or constness parameters have restrictions on their uses:
+* `in` parameters can only appear in a function pointer's parameter types.
+* `out` parameters can appear as a member's type or qualifier, in a function pointer's return type.
+* Neither an `in` nor `out` marked parameter may appear behind a non-const pointer (for the same reason as illustrated above).
+* If you instantiate a sub-struct with type parameters, the modifier must match.
+
+Matching means at a high level:
+`in` is like a negative sign and `out` is like a positive sign. Nesting is like multiplication.
+
+An example:
+```C5
+forall<out constness C> struct Foo { C int* elem; };
+forall<in constness C> struct Bar {    int (*func)(C int* param); };
+forall<out type T> struct View { const T* data; size_t len; };
+forall<type T>     struct Vec  { T* data; size_t len; };
+forall<in type T>  struct Show { void (*show)(const T* item); };
+
+forall<out constness C>
+struct Doc {
+    // out arg in out position
+    View<Foo<C>> items;    // ok
+
+    Vec<Foo<C>>  scratch;  // error: C is in an invariant position
+    Show<Foo<C>> printer;  // error: C is in a contravariant position
+
+    // in arg in an in position (cancels out)
+    Show<Bar<C>> thing;    // ok
+};
+```
+
+
 ### The Array and Slice types
 
 C5 has three different kinds of entities that may be indexed with []:
 1. Classical C arrays: declared as `int x[5];`. These undergo decay in parameters, as before.
 2. Proper array types declared as `array<int, 5> x;`. These can be passed and returned by value, like arrays in structs.
-3. Finally, a slice type written as `slice<int>`. Under the hood, it is a two element struct, with a pointer (`data`), followed by a `size_t` length field (`length`).
+3. Finally, a slice type written as `slice<mut, int>`. Under the hood, it is a two element struct, with a pointer (`data`), followed by a `size_t` length field (`length`).
 
 #### C5 Arrays
 
@@ -384,7 +543,7 @@ array<int, 1> y = { 0 };
 slice<int> x = y[...];
 ```
 
-There are no implicit conversions to slices, except from `slice<T>` to `slice<const T>`.
+There are no implicit conversions to slices.
 
 ### String Literals
 
@@ -760,6 +919,8 @@ There are also contextual keywords:
     * type
     * size
     * constness
+    * in
+    * out
 * As the argument for a constness parameter
     * mut
 

@@ -691,6 +691,9 @@ addstr(struct array *buf, const char *s)
 
 static void typestr(struct array *, struct type *, enum typequal, const char *);
 
+/* whether to spell out constness arguments, which instance names leave out */
+static bool spellconst;
+
 static void
 argsstr(struct array *buf, struct generic *g, struct genarg *args)
 {
@@ -703,8 +706,11 @@ argsstr(struct array *buf, struct generic *g, struct genarg *args)
 		if (i > 0)
 			addstr(buf, ", ");
 		/* constness is erased, leaving an empty slot */
-		if (g->params[i].kind == GENCONSTNESS)
+		if (g->params[i].kind == GENCONSTNESS) {
+			if (spellconst)
+				addstr(buf, !args[i].constset || args[i].qual & ~QUALCONST ? g->params[i].name : args[i].qual & QUALCONST ? "const" : "mut");
 			continue;
+		}
 		if (g->params[i].kind == GENSIZE) {
 			if (args[i].size->kind == EXPRCONST) {
 				snprintf(num, sizeof(num), "%llu", args[i].size->u.constant.u);
@@ -1269,7 +1275,9 @@ typespelling(struct type *t, enum typequal q)
 {
 	struct array buf = {0};
 
+	spellconst = true;
 	typestr(&buf, t, q, "");
+	spellconst = false;
 	arrayaddbuf(&buf, "", 1);
 	return buf.val;
 }

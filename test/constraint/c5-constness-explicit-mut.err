@@ -1,1 +1,1 @@
-error: assignment to pointer discards qualifiers
+error: argument 1 of call to 'find' has type 'const char*', but parameter 's' has type 'char*' (assignment to pointer discards qualifiers)

@@ -1,0 +1,17 @@
+struct A { int a; }; struct B { int b; };
+int g(struct A *a, const char *name, int n);
+struct A h(void);
+static int bad = "str";
+int f(struct B *b, const char *s, const int *cp) {
+	int *p = cp;
+	struct A sa;
+	int x = g(b, s, 3);
+	x = g(&sa, 4, sa);
+	x = g(&sa);
+	x = g(&sa, s, 1, 2);
+	*cp = 1;
+	sa = *b;
+	p = s;
+	return h();
+}
+int ok(void) { return 1; }

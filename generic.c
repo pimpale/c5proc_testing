@@ -58,6 +58,23 @@ constbits(struct generic *g)
 	return bits;
 }
 
+enum typequal
+genconstbits(struct generic *g)
+{
+	return constbits(g);
+}
+
+/* whether t refers to the constness parameter i of g */
+bool
+typehasconstparam(struct type *t, struct generic *g, size_t i)
+{
+	struct generic one = {0};
+
+	one.nparam = 1;
+	one.params = &g->params[i];
+	return typehasparam(t, &one);
+}
+
 /* substitute the constness arguments of g for its constness parameters in q */
 enum typequal
 qualsubst(enum typequal q, struct generic *g, struct genarg *args)
@@ -1076,9 +1093,27 @@ argsstr(struct array *buf, struct generic *g, struct genarg *args)
 	addstr(buf, ">");
 }
 
+/* the unknown constness of destructured values, which are numbered to tell them apart */
+static void
+exqualstr(struct array *buf, enum typequal q, bool before)
+{
+	char name[32];
+	int i;
+
+	if (!spellconst || q & QUALCONST)
+		return;
+	for (i = 0; i < 16; ++i) {
+		if (q & QUALXPARAM0 << i) {
+			snprintf(name, sizeof(name), before ? " ?const%d" : "?const%d ", i + 1);
+			addstr(buf, name);
+		}
+	}
+}
+
 static void
 qualstr(struct array *buf, enum typequal q)
 {
+	exqualstr(buf, q, false);
 	if (q & QUALCONST)
 		addstr(buf, "const ");
 	if (q & QUALVOLATILE)
@@ -1107,6 +1142,7 @@ typestr(struct array *buf, struct type *t, enum typequal q, const char *inner)
 			addstr(&tmp, "(*");
 		else
 			addstr(&tmp, "*");
+		exqualstr(&tmp, q, true);
 		if (q & QUALCONST)
 			addstr(&tmp, " const");
 		if (q & QUALVOLATILE)

@@ -1,0 +1,3 @@
+export data $ok1 = align 8 { l $mi, l $wr, }
+export data $ok2 = align 8 { l $ci, l $rd, }
+export data $ok3 = align 8 { l $mi, l $rd, }

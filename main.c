@@ -8,7 +8,7 @@
 static void
 usage(void)
 {
-	fprintf(stderr, "usage: %s [input]\n", argv0);
+	fprintf(stderr, "usage: %s [-E] [-t target] [-o output] [-w] [-W[no-]warning] [-W[no-]error[=warning]] [input]\n", argv0);
 	exit(2);
 }
 
@@ -28,6 +28,14 @@ main(int argc, char *argv[])
 		break;
 	case 'o':
 		output = EARGF(usage());
+		break;
+	case 'W':
+		/* the rest of the argument names the warning */
+		warnoption(opt_ + 1);
+		done_ = 1;
+		break;
+	case 'w':
+		warnnone();
 		break;
 	default:
 		usage();

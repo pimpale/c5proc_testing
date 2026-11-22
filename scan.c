@@ -16,6 +16,8 @@ struct scanner {
 	int chr;
 	bool usebuf;
 	bool sawspace;
+	/* whether a line marker said that this is the text of a system header */
+	bool sys;
 	FILE *file;
 	struct location loc;
 	struct buffer buf;
@@ -203,12 +205,40 @@ done:
 	return TNUMBER;
 }
 
+/* a delimited escape sequence (C2y), like \x{1F}, after its letter */
+static void
+delimited(struct scanner *s, int kind)
+{
+	int n;
+
+	nextchar(s);
+	for (n = 0; kind == 'o' ? isodigit(s->chr) : isxdigit(s->chr); ++n)
+		nextchar(s);
+	if (n == 0)
+		error(&s->loc, "delimited escape sequence has no digits");
+	if (s->chr != '}')
+		error(&s->loc, "invalid digit in delimited escape sequence, or missing '}'");
+	nextchar(s);
+}
+
 static void
 escape(struct scanner *s)
 {
 	nextchar(s);
-	if (s->chr == 'x') {
+	if (s->chr == 'o' || s->chr == 'u') {
+		/* these only have a delimited form */
+		int kind = s->chr;
+
 		nextchar(s);
+		if (s->chr != '{')
+			error(&s->loc, "invalid escape sequence");
+		delimited(s, kind);
+	} else if (s->chr == 'x') {
+		nextchar(s);
+		if (s->chr == '{') {
+			delimited(s, 'x');
+			return;
+		}
 		if (!isxdigit(s->chr))
 			error(&s->loc, "invalid hexadecimal escape sequence");
 		do nextchar(s);
@@ -473,6 +503,12 @@ scansetloc(struct location loc)
 	scanner->loc = loc;
 }
 
+void
+scansetsys(bool sys)
+{
+	scanner->sys = sys;
+}
+
 static void
 scanclose(void)
 {
@@ -502,6 +538,7 @@ scan(struct token *t)
 	t->space = scanner->sawspace;
 	t->hide = false;
 	t->c5 = c5file(t->loc.file);
+	t->sys = scanner->sys;
 }
 
 /*

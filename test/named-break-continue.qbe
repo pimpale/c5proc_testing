@@ -1,0 +1,159 @@
+data $.Lstring.2 = align 1 { b "%d %d %d %d %d\012\000", }
+export
+function w $main() {
+@start.1
+	%.1 =l alloc4 4
+	%.2 =l alloc4 4
+	%.3 =l alloc4 4
+	%.4 =l alloc4 4
+	%.5 =l alloc4 4
+	%.8 =l alloc4 4
+	%.28 =l alloc4 4
+	%.43 =l alloc4 4
+@body.2
+	storew 0, %.1
+	storew 0, %.2
+	storew 0, %.3
+	storew 0, %.4
+@outer.3
+	storew 0, %.5
+@for_cond.4
+	%.6 =w loadw %.5
+	%.7 =w csltw %.6, 5
+	jnz %.7, @for_body.5, @for_join.7
+@for_body.5
+	storew 0, %.8
+@for_cond.8
+	%.9 =w loadw %.8
+	%.10 =w csltw %.9, 5
+	jnz %.10, @for_body.9, @for_join.11
+@for_body.9
+	%.11 =w loadw %.8
+	%.12 =w ceqw %.11, 3
+	jnz %.12, @if_true.12, @if_false.13
+@if_true.12
+	jmp @for_cont.6
+@if_false.13
+	%.13 =w loadw %.5
+	%.14 =w ceqw %.13, 3
+	jnz %.14, @if_true.14, @if_false.15
+@if_true.14
+	jmp @for_join.7
+@if_false.15
+	%.15 =w loadw %.1
+	%.16 =w add %.15, 1
+	storew %.16, %.1
+@for_cont.10
+	%.17 =w loadw %.8
+	%.18 =w add %.17, 1
+	storew %.18, %.8
+	jmp @for_cond.8
+@for_join.11
+@for_cont.6
+	%.19 =w loadw %.5
+	%.20 =w add %.19, 1
+	storew %.20, %.5
+	jmp @for_cond.4
+@for_join.7
+@a.16
+@b.17
+@while_cond.18
+	jnz 1, @while_body.19, @while_join.20
+@while_body.19
+@sw.21
+	%.21 =w loadw %.2
+	jmp @switch_cond.22
+@switch_case.24
+	storew 1, %.2
+	jmp @switch_join.23
+@switch_case.25
+	storew 2, %.2
+	jmp @while_cond.18
+@switch_default.26
+	jmp @while_join.20
+@switch_cond.22
+	%.22 =w ceqw %.21, 0
+	jnz %.22, @switch_case.24, @switch_ne.27
+@switch_ne.27
+	%.23 =w cultw %.21, 0
+	jnz %.23, @switch_lt.28, @switch_gt.29
+@switch_lt.28
+	jmp @switch_default.26
+@switch_gt.29
+	%.24 =w ceqw %.21, 1
+	jnz %.24, @switch_case.25, @switch_ne.30
+@switch_ne.30
+	%.25 =w cultw %.21, 1
+	jnz %.25, @switch_lt.31, @switch_gt.32
+@switch_lt.31
+	jmp @switch_default.26
+@switch_gt.32
+	jmp @switch_default.26
+@switch_join.23
+	%.26 =w loadw %.2
+	%.27 =w add %.26, 10
+	storew %.27, %.2
+	jmp @while_cond.18
+@while_join.20
+@rows.33
+@do_body.34
+	storew 0, %.28
+@while_cond.37
+	jnz 1, @while_body.38, @while_join.39
+@while_body.38
+	%.29 =w loadw %.28
+	%.30 =w add %.29, 1
+	storew %.30, %.28
+	%.31 =w ceqw %.30, 2
+	jnz %.31, @if_true.40, @if_false.41
+@if_true.40
+	%.32 =w loadw %.4
+	%.33 =w add %.32, 1
+	storew %.33, %.4
+	jmp @do_cond.35
+@if_false.41
+	%.34 =w loadw %.3
+	%.35 =w ceqw %.34, 2
+	jnz %.35, @if_true.42, @if_false.43
+@if_true.42
+	%.36 =w loadw %.4
+	%.37 =w add %.36, 1
+	storew %.37, %.4
+	jmp @do_join.36
+@if_false.43
+	%.38 =w loadw %.4
+	%.39 =w add %.38, 1
+	storew %.39, %.4
+	jmp @while_cond.37
+@while_join.39
+@do_cond.35
+	%.40 =w loadw %.3
+	%.41 =w add %.40, 1
+	storew %.41, %.3
+	%.42 =w csltw %.41, 10
+	jnz %.42, @do_body.34, @do_join.36
+@do_join.36
+	storew 0, %.43
+@again.44
+@for_cond.45
+@for_body.46
+	%.44 =w loadw %.43
+	%.45 =w add %.44, 1
+	storew %.45, %.43
+	%.46 =w csltw %.44, 2
+	jnz %.46, @if_true.49, @if_false.50
+@if_true.49
+	jmp @again.44
+@if_false.50
+	jmp @for_join.48
+@for_cont.47
+	jmp @for_cond.45
+@for_join.48
+	%.47 =w loadw %.1
+	%.48 =w loadw %.2
+	%.49 =w loadw %.3
+	%.50 =w loadw %.4
+	%.51 =w loadw %.43
+	%.52 =w call extern $printf(l $.Lstring.2, ..., w %.47, w %.48, w %.49, w %.50, w %.51)
+	ret 0
+}

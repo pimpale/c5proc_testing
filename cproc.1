@@ -106,6 +106,30 @@ For example,
 will forward the option
 .Fl -gc-sections
 to the linker.
+.It Fl W Ns Ar warning , Fl Wno- Ns Ar warning
+Enable or disable the named warning.
+Names that are not known are ignored, so that options meant for other
+compilers can be passed.
+The warnings are:
+.Bl -tag -width Ds
+.It Cm deprecated-octal-literals
+An octal constant is written without the
+.Sy 0o
+prefix, like
+.Sy 0755 .
+This is not reported for constants written in system headers.
+Enabled by default.
+.El
+.It Fl Werror , Fl Wno-error
+Report all warnings as errors, or not.
+.It Fl Werror= Ns Ar warning , Fl Wno-error= Ns Ar warning
+Report the named warning as an error, or not, whatever
+.Fl Werror
+says.
+.Fl Werror= Ns Ar warning
+also enables the warning.
+.It Fl w
+Disable all warnings.
 .It Fl static
 Link the executable statically.
 .It Fl nostdlib

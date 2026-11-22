@@ -297,8 +297,21 @@ exmember(struct initparser *p, struct type *t, struct expr *e)
 	memcpy(old, o->exbind, ex->nparam * sizeof(*old));
 	if (!genunify(ex, o->exbind, t, QUALNONE, e->type, QUALNONE))
 		exconflict(o, old, t, e->type);
+	/* an existential constness is const if any initializer supplies const to it */
+	genscanconst(ex, o->exbind, t, e->type, 1);
 	for (i = 0; i < ex->nparam; ++i) {
-		if (!exbound(&old[i]) && exbound(&o->exbind[i])) {
+		if (ex->params[i].kind == GENCONSTNESS) {
+			/* the earlier initializers were converted with the constness known then */
+			if (o->exsrc[i].mem && old[i].qual != o->exbind[i].qual) {
+				error(&tok.loc, "member '%s' is initialized with a value of type '%s', which makes existential constness '%s' const, after member '%s' was initialized with it not const; initialize '%s' first",
+					o->u.mem->name ? o->u.mem->name : "<anonymous>", typespelling(e->type, QUALNONE), ex->params[i].name,
+					o->exsrc[i].mem->name ? o->exsrc[i].mem->name : "<anonymous>", o->u.mem->name ? o->u.mem->name : "<anonymous>");
+			}
+			if (!o->exsrc[i].mem && typehasconstparam(t, ex, i)) {
+				o->exsrc[i].mem = o->u.mem;
+				o->exsrc[i].type = e->type;
+			}
+		} else if (!exbound(&old[i]) && exbound(&o->exbind[i])) {
 			o->exsrc[i].mem = o->u.mem;
 			o->exsrc[i].type = e->type;
 		}

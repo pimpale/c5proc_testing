@@ -660,7 +660,28 @@ decodechar(const char *src, uint_least32_t *chr, bool *hexoct, const char *desc,
 		case 'r':  c = '\r'; ++s; break;
 		case 't':  c = '\t'; ++s; break;
 		case 'v':  c = '\v'; ++s; break;
+		case 'o':
+		case 'u':
 		case 'x':
+			if (s[1] == '{') {
+				/* delimited escape sequence (C2y); the scanner checked its form */
+				i = *s;
+				c = 0;
+				for (s += 2; *s != '}'; ++s) {
+					if (c > 0xffffffff / 16)
+						error(loc, "escape sequence in %s is out of range", desc);
+					c = c * (i == 'o' ? 8 : 16) + hexval(*s);
+				}
+				++s;
+				if (i == 'u') {
+					/* a universal character name, which is encoded like the character written directly */
+					if (c > 0x10ffff || c >= 0xd800 && c <= 0xdfff)
+						error(loc, "\\u{%lx} in %s is not a Unicode scalar value", (unsigned long)c, desc);
+				} else {
+					*hexoct = true;
+				}
+				break;
+			}
 			++s;
 			c = 0;
 			v = hexval(*s);
@@ -914,7 +935,7 @@ primaryexpr(struct scope *s)
 	uint_least32_t chr;
 	unsigned long long val;
 	bool hexoct, ordinary, c5;
-	int base;
+	int base, prefix;
 	struct type *hint;
 
 	hint = NULL;
@@ -963,10 +984,14 @@ primaryexpr(struct scope *s)
 		break;
 	case TNUMBER:
 		e = mkexpr(EXPRCONST, NULL, NULL);
+		/* length of a prefix that strtoull does not know */
+		prefix = 0;
 		if (tok.lit[0] == '0') {
 			switch (tok.lit[1]) {
 			case 'x': case 'X': base = 16; break;
-			case 'b': case 'B': base = 2; break;
+			case 'b': case 'B': base = 2, prefix = 2; break;
+			/* C2y octal constant, like 0o755 */
+			case 'o': case 'O': base = 8, prefix = 2; break;
 			default: base = 8; break;
 			}
 		} else {
@@ -986,9 +1011,10 @@ primaryexpr(struct scope *s)
 			else
 				error(&tok.loc, "invalid floating constant suffix '%s'", end);
 		} else {
-			src = tok.lit;
-			if (base == 2)
-				src += 2;
+			/* C2y makes octal constants without the 0o prefix obsolescent */
+			if (base == 8 && !prefix && tok.lit[1] && strspn(tok.lit, "01234567'") > 1 && !tok.sys)
+				warning(WARNOCTAL, &tok.loc, "octal constant '%s' has no '0o' prefix, which is obsolescent; write '0o%s'", tok.lit, tok.lit + 1);
+			src = tok.lit + prefix;
 			/* integer constant */
 			e->u.constant.u = strtoull(src, &end, base);
 			if (end == src)
@@ -1133,7 +1159,21 @@ argscomplete(struct generic *g, struct genarg *args)
 	return true;
 }
 
-/* new types for the existential parameters of a struct value that is being destructured */
+/* number of existential constness parameters opened in the function being parsed */
+static unsigned nexconst;
+
+void
+exopenreset(void)
+{
+	nexconst = 0;
+}
+
+/*
+New types and constness for the existential parameters of a struct
+value that is being destructured. The constness is not known, so what
+it qualifies cannot be written, and it only converts to itself or
+const.
+*/
 struct genarg *
 exopen(struct generic *ex)
 {
@@ -1155,8 +1195,16 @@ exopen(struct generic *ex)
 		snprintf(name, len, "%s#%u", ex->params[i].name, id);
 		g->params[i] = ex->params[i];
 		g->params[i].name = name;
-		g->params[i].type = mkparamtype(g, i, name);
 		memset(&args[i], 0, sizeof(args[i]));
+		if (ex->params[i].kind == GENCONSTNESS) {
+			if (nexconst == 16)
+				error(&tok.loc, "too many values with existential constness are destructured in this function");
+			g->params[i].bit = QUALXPARAM0 << nexconst++;
+			args[i].qual = g->params[i].bit;
+			args[i].constset = true;
+			continue;
+		}
+		g->params[i].type = mkparamtype(g, i, name);
 		args[i].type = g->params[i].type;
 	}
 	return args;
@@ -1175,9 +1223,13 @@ mkmemberexpr(struct expr *r, struct type *t, struct member *m, unsigned long lon
 	enum typequal mq;
 
 	mt = m->type;
-	mq = r->type->qual | m->qual;
-	if (exargs && typehasparam(mt, t->u.structunion.exists))
-		mt = typesubst(mt, &mq, t->u.structunion.exists, exargs);
+	mq = m->qual;
+	if (exargs) {
+		mq = qualsubst(mq, t->u.structunion.exists, exargs);
+		if (typehasparam(mt, t->u.structunion.exists))
+			mt = typesubst(mt, &mq, t->u.structunion.exists, exargs);
+	}
+	mq |= r->type->qual;
 	if (typedep(t) && !m->name)
 		error(&tok.loc, "unnamed member of a struct depending on mono parameters cannot be accessed");
 	r = mkbinaryexpr(&tok.loc, TADD, exprconvert(r, &typeulong), typedep(t) ? mklayoutexpr(LAYOUTOFFSET, t, m->name) : mkconstexpr(&typeulong, offset));
@@ -2163,7 +2215,7 @@ postfixexpr(struct scope *s, struct expr *r)
 			if (!m)
 				error(&tok.loc, "%s has no member named '%s'", t->kind == TYPEUNION ? "union" : "struct", tokenstr(tok.kind));
 			/* each value has its own types for existential parameters, which are only named by destructuring it */
-			if (t->u.structunion.exists && typehasparam(m->type, t->u.structunion.exists))
+			if (t->u.structunion.exists && (typehasparam(m->type, t->u.structunion.exists) || m->qual & genconstbits(t->u.structunion.exists)))
 				error(&tok.loc, "member '%s' has an existential type, so it can only be accessed by destructuring", m->name);
 			e = mkmemberexpr(r, t, m, offset, lvalue, NULL);
 			next();

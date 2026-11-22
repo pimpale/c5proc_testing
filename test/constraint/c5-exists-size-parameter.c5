@@ -1,0 +1,1 @@
+exists<size N> struct Z { int x; };

@@ -1,0 +1,1 @@
+error: 'continue b' must name an enclosing loop, but no enclosing loop is labeled 'b'

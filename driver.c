@@ -521,7 +521,7 @@ ignore:
 			puts(target);
 			return 0;
 		} else {
-			if (arg[2] != '\0' && strchr("cESsv", arg[1]))
+			if (arg[2] != '\0' && strchr("cESsvw", arg[1]))
 				usage(NULL);
 			switch (arg[1]) {
 			case 'c':
@@ -593,6 +593,9 @@ ignore:
 			case 'v':
 				flags.verbose = true;
 				break;
+			case 'w':
+				arrayaddptr(&stages[COMPILE].cmd, arg);
+				break;
 			case 'W':
 				if (arg[2] && arg[3] == ',') {
 					switch (arg[2]) {
@@ -608,7 +611,8 @@ ignore:
 						arrayaddptr(cmd, arg);
 					}
 				} else {
-					/* ignore warning flag */
+					/* the compiler ignores the warning options it does not know */
+					arrayaddptr(&stages[COMPILE].cmd, arg);
 				}
 				break;
 			case 'x':

@@ -1,0 +1,92 @@
+export
+function $drop(l %.1, l %.3) {
+@start.1
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+	%.5 =l alloc8 16
+@body.2
+	%.6 =l loadl %.4
+	%.7 =l loadl %.6
+	storel %.7, %.5
+	%.8 =l add %.6, 8
+	%.9 =l add %.5, 8
+	%.10 =l loadl %.8
+	storel %.10, %.9
+	%.11 =l loadl %.2
+	%.12 =l add %.5, 0
+	%.13 =l loadl %.12
+	%.14 =l add %.5, 8
+	%.15 =l loadl %.14
+	call %.15(l %.11, l %.13)
+	ret
+}
+export
+function $count_drop(l %.1, l %.3) {
+@start.3
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+@body.4
+	%.5 =l loadl %.4
+	%.6 =l add %.5, 0
+	%.7 =w loadw %.6
+	%.8 =l loadl %.2
+	%.9 =w loadw %.8
+	%.10 =w add %.7, %.9
+	storew %.10, %.6
+	ret
+}
+export
+function $peek_drop(l %.1, l %.3) {
+@start.5
+	%.2 =l alloc8 8
+	storel %.1, %.2
+	%.4 =l alloc8 8
+	storel %.3, %.4
+@body.6
+	%.5 =l loadl %.2
+	%.6 =w loadw %.5
+	%.7 =l loadl %.4
+	%.8 =l add %.7, 0
+	%.9 =w loadw %.8
+	%.10 =w add %.6, %.9
+	storew %.10, %.5
+	ret
+}
+export data $fixed = align 4 { w 100, }
+data $.Lstring.5 = align 1 { b "%d %d %d\012\000", }
+export
+function w $main() {
+@start.7
+	%.1 =l alloc4 4
+	%.2 =l alloc4 4
+	%.3 =l alloc8 16
+	%.5 =l alloc8 16
+	%.7 =l alloc8 16
+@body.8
+	storew 3, %.1
+	storew 4, %.2
+	storel extern $counter, %.3
+	%.4 =l add %.3, 8
+	storel extern $count_drop, %.4
+	call extern $drop(l %.1, l %.3)
+	call extern $drop(l %.2, l %.3)
+	storel extern $fixed, %.5
+	%.6 =l add %.5, 8
+	storel extern $peek_drop, %.6
+	call extern $drop(l %.1, l %.5)
+	storel extern $counter, %.7
+	%.8 =l add %.7, 8
+	storel extern $peek_drop, %.8
+	call extern $drop(l %.2, l %.7)
+	%.9 =l add extern $counter, 0
+	%.10 =w loadw %.9
+	%.11 =w loadw %.1
+	%.12 =w loadw %.2
+	%.13 =w call extern $printf(l $.Lstring.5, ..., w %.10, w %.11, w %.12)
+	ret 0
+}
+export data $counter = align 4 { z 4 }

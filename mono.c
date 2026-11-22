@@ -128,15 +128,16 @@ static struct genarg *
 eraseconst(struct generic *g, struct genarg *args)
 {
 	static struct generic *anyconst;
-	static struct genarg constargs[3];
+	enum {NBITS = 3 + 16};
+	static struct genarg constargs[NBITS];
 	struct genarg *n;
 	size_t i;
 
 	if (!anyconst) {
 		anyconst = mkgeneric(false);
-		anyconst->nparam = 3;
-		anyconst->params = xreallocarray(NULL, 3, sizeof(anyconst->params[0]));
-		for (i = 0; i < 3; ++i) {
+		anyconst->nparam = NBITS;
+		anyconst->params = xreallocarray(NULL, NBITS, sizeof(anyconst->params[0]));
+		for (i = 0; i < NBITS; ++i) {
 			memset(&anyconst->params[i], 0, sizeof(anyconst->params[i]));
 			anyconst->params[i].kind = GENCONSTNESS;
 			anyconst->params[i].bit = QUALCPARAM0 << i;

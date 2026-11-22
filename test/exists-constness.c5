@@ -1,0 +1,42 @@
+int printf(const char *, ...);
+
+forall<type T>
+exists<constness C, type E>
+struct Drop {
+	C E* env;
+	void (*drop)(T* val, C E* env);
+};
+
+forall<type T>
+void drop(T* val, implicit const Drop<T>* drop_vt) {
+	{auto drop_env, auto drop_fn} = *drop_vt;
+	drop_fn(val, drop_env);
+}
+
+struct Counter { int n; };
+void count_drop(int* v, struct Counter* c) { c->n += *v; }
+void peek_drop(int* v, const struct Counter* c) { *v += c->n; }
+
+struct Counter counter;
+const struct Counter fixed = { 100 };
+
+int main(void) {
+	int a = 3, b = 4;
+	{
+		given const Drop<int> D = { .env = &counter, .drop = count_drop };
+		drop(&a);
+		drop(&b);
+	}
+	{
+		/* const environment: only a function that takes it as const fits */
+		given const Drop<int> D = { .env = &fixed, .drop = peek_drop };
+		drop(&a);
+	}
+	{
+		/* a function that only reads also fits a mutable environment */
+		given const Drop<int> D = { &counter, peek_drop };
+		drop(&b);
+	}
+	printf(cn"%d %d %d\n", counter.n, a, b);
+	return 0;
+}

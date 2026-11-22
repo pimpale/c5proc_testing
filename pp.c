@@ -295,6 +295,7 @@ static void
 directive(void)
 {
 	struct location newloc;
+	bool sys;
 	enum ppflags oldflags;
 	enum tokenkind kind;
 
@@ -352,6 +353,13 @@ directive(void)
 			assert(quote);
 			*quote = '\0';
 			scan(&tok);
+			/* flags of a line marker; 3 says that the text is from a system header */
+			sys = false;
+			while (tok.kind == TNUMBER) {
+				sys |= strcmp(tok.lit, "3") == 0;
+				scan(&tok);
+			}
+			scansetsys(sys);
 		}
 		while (tok.kind == TNUMBER)
 			scan(&tok);
@@ -490,6 +498,7 @@ paste(struct token *l, struct token *r, struct token *op)
 	t.space = l->space;
 	/* the token is written by the operator, not by its operands */
 	t.c5 = op->c5;
+	t.sys = op->sys;
 	*l = t;
 }
 
@@ -524,6 +533,7 @@ subst(struct macro *m, struct macroarg *args, struct token *t, struct token *end
 			tmp = stringize(&args[macroparam(m, t + 1)]);
 			tmp.loc = *loc;
 			tmp.c5 = t->c5;
+			tmp.sys = t->sys;
 			seq = &tmp, n = 1;
 			t += 2;
 		} else if (t->kind == T__VA_OPT__ && macrovarargs(m)) {

@@ -1,0 +1,3 @@
+exists<constness C> struct S { C int* p; void (*w)(C int*); };
+void wr(int*); void rd(const int*); extern const int ci; extern int mi;
+void f(S* a) { {auto p, auto w} = *a; *p = 1; }

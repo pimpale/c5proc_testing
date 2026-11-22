@@ -80,6 +80,13 @@ and `sizeof` parentheses being required only in C-incompatible mode.
 - [ ] **Given specificity.** A `forall<constness C>` given and a given for one constness
   are not ordered by either tie-break. *Implemented:* ambiguous if both match.
 
+- [ ] **Existential constness.** The spec only shows `exists` with type parameters.
+  *Implemented:* `exists<constness C>` is allowed. In an initializer, `C` is const if any
+  member's initializer supplies const to it (ignoring negative positions, as in calls);
+  a member that makes it const must come before the other members that mention it.
+  When a value is destructured its `C` is unknown: what it qualifies cannot be written,
+  and converts only to const or to the same value's `C`.
+
 ## Destructuring and switch
 
 - [ ] **Bindings — types.** Say whether a typed binding must match the member's type.

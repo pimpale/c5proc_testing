@@ -3,7 +3,7 @@
 : ${CCQBE:=./cproc-qbe}
 
 if [ $# = 0 ] ; then
-	set -- test/*.c test/*.c5 test/constraint/*.c test/constraint/*.c5
+	set -- test/*.c test/*.c5 test/constraint/*.c test/constraint/*.c5 test/warning/*.c test/warning/*.c5
 fi
 
 numtest=0
@@ -24,19 +24,24 @@ checkfail() {
 for test ; do
 	[ -e "$test" ] || continue
 	name=${test%.*}
+	# tests of warnings expect them as errors
+	case $test in
+	test/warning/*) werror=-Werror ;;
+	*) werror= ;;
+	esac
 	case $name in
 	*+*) arch=${name##*+} ;;
 	*) arch=x86_64-sysv ;;
 	esac
 	if [ -f "$name.qbe" ] ; then
 		want=$name.qbe
-		set -- $CCQBE -t $arch -o "$got" "$test"
+		set -- $CCQBE -w -t $arch -o "$got" "$test"
 	elif [ -f "$name.pp" ] ; then
 		want=$name.pp
 		set -- $CCQBE -t $arch -E -o "$got" "$test"
 	elif [ -f "$name.err" ] ; then
 		want=$name.err
-		set -- checkfail "$got" $CCQBE -t $arch -o /dev/null "$test"
+		set -- checkfail "$got" $CCQBE $werror -t $arch -o /dev/null "$test"
 	else
 		echo "invalid test '$test'" >&2
 		continue

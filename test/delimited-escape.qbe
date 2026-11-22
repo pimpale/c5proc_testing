@@ -1,0 +1,6 @@
+export data $a = align 1 { b "ABC\000", }
+export data $b = align 1 { b "\0012\0077\000", }
+export data $c = align 1 { b "\303\251\360\237\230\200\000", }
+export data $d = align 2 { h 55357 56832 65535 0 , }
+export data $e = align 4 { w 1114111 15 0 , }
+export data $f = align 4 { w 257, }

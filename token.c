@@ -169,6 +169,85 @@ enum {
 	MAXERRORS = 20,
 };
 
+static struct {
+	const char *name;
+	bool enabled;
+	/* reported as an error: set by -Werror=<name>, cleared by -Wno-error=<name>, otherwise as -Werror says */
+	bool iserror, seterror;
+} warnings[NWARN] = {
+	[WARNOCTAL] = {"deprecated-octal-literals", true},
+};
+static bool werror;
+
+/* -w: report no warnings */
+void
+warnnone(void)
+{
+	int i;
+
+	for (i = 0; i < NWARN; ++i)
+		warnings[i].enabled = false;
+}
+
+/*
+Handle the option -W<opt>. Options that are not known are ignored, so
+that warning options meant for other compilers can be passed.
+*/
+void
+warnoption(const char *opt)
+{
+	bool no, error;
+	int i;
+
+	no = strncmp(opt, "no-", 3) == 0;
+	if (no)
+		opt += 3;
+	if (strcmp(opt, "error") == 0) {
+		werror = !no;
+		return;
+	}
+	error = strncmp(opt, "error=", 6) == 0;
+	if (error)
+		opt += 6;
+	for (i = 0; i < NWARN; ++i) {
+		if (strcmp(opt, warnings[i].name) != 0)
+			continue;
+		if (error) {
+			warnings[i].seterror = true;
+			warnings[i].iserror = !no;
+			/* like other compilers, -Werror=<name> also enables the warning */
+			if (!no)
+				warnings[i].enabled = true;
+		} else {
+			warnings[i].enabled = !no;
+		}
+	}
+}
+
+void
+warning(enum warnkind kind, const struct location *loc, const char *fmt, ...)
+{
+	va_list ap;
+	bool iserror;
+
+	if (!warnings[kind].enabled)
+		return;
+	iserror = warnings[kind].seterror ? warnings[kind].iserror : werror;
+	diagloc(loc);
+	fputs(iserror ? "error: " : "warning: ", stderr);
+	va_start(ap, fmt);
+	vfprintf(stderr, fmt, ap);
+	va_end(ap);
+	fprintf(stderr, " [-W%s%s]\n", iserror ? "error=" : "", warnings[kind].name);
+	if (!iserror)
+		return;
+	/* like softerror, later diagnostics are still reported, but no code is generated */
+	if (++nerrors == MAXERRORS) {
+		fputs("too many errors\n", stderr);
+		exit(1);
+	}
+}
+
 void
 softerror(const struct location *loc, const char *fmt, ...)
 {

@@ -1,0 +1,1 @@
+error: argument 1 has type '?const2 int*', but parameter has type '?const1 int*' (assignment to pointer discards qualifiers)

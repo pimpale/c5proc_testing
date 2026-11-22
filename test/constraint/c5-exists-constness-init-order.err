@@ -1,0 +1,1 @@
+error: member 'p' is initialized with a value of type 'const int*', which makes existential constness 'C' const, after member 'w' was initialized with it not const; initialize 'p' first

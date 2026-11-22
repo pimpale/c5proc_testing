@@ -349,6 +349,8 @@ label(struct funcctx *fc, struct scope *s, struct stmt ***end)
 		st->defer = s->defer;
 		st->u.label.name = name;
 		st->u.label.indefer = s->indefer;
+		st->u.label.nextname = fc->names;
+		fc->names = st;
 		break;
 	}
 	return 1;
@@ -359,10 +361,12 @@ labelstmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 {
 	int r;
 
+	fc->names = NULL;
 	while ((r = label(fc, s, end)) == 1)
 		;
 	if (r == 0)
 		stmt(fc, s, end);
+	fc->names = NULL;
 }
 
 /* parse a compound statement, with s as the scope of the block */
@@ -401,6 +405,31 @@ secondary(struct funcctx *fc, struct scope *s, struct stmt ***end)
 	st->u.compound.enddefer = s->defer;
 }
 
+/*
+The enclosing loop or switch statement that is labeled `name`, which
+`break name;` or `continue name;` targets (C2y). A jump may not leave a
+deferred block, so the statements outside of it are not found.
+*/
+static struct stmt *
+namedtarget(struct scope *s, const char *name, const char *keyword, bool loop)
+{
+	struct stmt *st, *l;
+
+	for (st = s->breakstmt; st; st = st->outer) {
+		for (l = st->names; l; l = l->u.label.nextname) {
+			if (strcmp(l->u.label.name, name) != 0)
+				continue;
+			if (loop && st->kind == STMTSWITCH)
+				error(&tok.loc, "'%s %s' must name a loop, but '%s' labels a switch statement", keyword, name, name);
+			return st;
+		}
+	}
+	if (s->indefer)
+		error(&tok.loc, "'%s %s' must name an enclosing %s within the deferred block", keyword, name, loop ? "loop" : "loop or switch");
+	error(&tok.loc, "'%s %s' must name an enclosing %s, but no enclosing %s is labeled '%s'", keyword, name, loop ? "loop" : "loop or switch", loop ? "loop" : "loop or switch statement", name);
+	return NULL;
+}
+
 static struct stmt *
 jumpstmt(struct scope *s, struct stmt ***end, enum stmtkind kind)
 {
@@ -420,9 +449,12 @@ stmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 	char *name;
 	struct expr *e;
 	struct type *t;
-	struct stmt *st, **body;
+	struct stmt *st, **body, *names, *target;
 	struct scope *ds;
 
+	/* the labels of this statement */
+	names = fc->names;
+	fc->names = NULL;
 	attr(NULL, 0);
 	switch (tok.kind) {
 	/* 6.8.2 Compound statement */
@@ -495,6 +527,8 @@ stmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 			st->u.switchstmt.cond = e;
 			st->u.switchstmt.temp = exprtemp(e->type);
 		}
+		st->names = names;
+		st->outer = s->breakstmt;
 		body = &st->u.switchstmt.body;
 		s = mkscope(s);
 		s->breakstmt = st;
@@ -517,6 +551,8 @@ stmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 
 		st = addstmt(end, STMTWHILE);
 		st->defer = s->defer;
+		st->names = names;
+		st->outer = s->breakstmt;
 		st->u.loop.cond = e;
 		body = &st->u.loop.body;
 		s = mkscope(s);
@@ -531,6 +567,8 @@ stmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 
 		st = addstmt(end, STMTDO);
 		st->defer = s->defer;
+		st->names = names;
+		st->outer = s->breakstmt;
 		body = &st->u.loop.body;
 		s = mkscope(s);
 		s = mkscope(s);
@@ -557,6 +595,8 @@ stmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 		s = mkscope(s);
 		st = addstmt(end, STMTFOR);
 		st->defer = s->defer;
+		st->names = names;
+		st->outer = s->breakstmt;
 		body = &st->u.loop.init;
 		if (!decl(s, fc, &body)) {
 			if (tok.kind != TSEMICOLON)
@@ -596,18 +636,32 @@ stmt(struct funcctx *fc, struct scope *s, struct stmt ***end)
 		break;
 	case TCONTINUE:
 		next();
-		if (!s->continuestmt)
-			error(&tok.loc, s->indefer ? "'continue' statement must not exit a deferred block" : "'continue' statement must be in loop");
+		if (tok.kind >= TIDENT) {
+			/* continue with the loop that has this label */
+			target = namedtarget(s, tokenstr(tok.kind), "continue", true);
+			next();
+		} else {
+			if (!s->continuestmt)
+				error(&tok.loc, s->indefer ? "'continue' statement must not exit a deferred block" : "'continue' statement must be in loop");
+			target = s->continuestmt;
+		}
 		st = jumpstmt(s, end, STMTCONTINUE);
-		st->u.jump.target = s->continuestmt;
+		st->u.jump.target = target;
 		expect(TSEMICOLON, "after 'continue' statement");
 		break;
 	case TBREAK:
 		next();
-		if (!s->breakstmt)
-			error(&tok.loc, s->indefer ? "'break' statement must not exit a deferred block" : "'break' statement must be in loop or switch");
+		if (tok.kind >= TIDENT) {
+			/* leave the loop or switch that has this label */
+			target = namedtarget(s, tokenstr(tok.kind), "break", false);
+			next();
+		} else {
+			if (!s->breakstmt)
+				error(&tok.loc, s->indefer ? "'break' statement must not exit a deferred block" : "'break' statement must be in loop or switch");
+			target = s->breakstmt;
+		}
 		st = jumpstmt(s, end, STMTBREAK);
-		st->u.jump.target = s->breakstmt;
+		st->u.jump.target = target;
 		expect(TSEMICOLON, "after 'break' statement");
 		break;
 	case TRETURN:
@@ -686,6 +740,7 @@ funcbody(struct funcctx *fc, struct scope *s)
 
 	mapinit(&fc->labels, 8);
 	fc->gotos = NULL;
+	fc->names = NULL;
 	body = NULL;
 	end = &body;
 	stmt(fc, s, &end);

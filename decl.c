@@ -1428,16 +1428,15 @@ defined, and statements initializing automatic objects are added to
 */
 /* parse a parameter list `<...>` of a forall or exists clause into g, declaring the parameters in s */
 static void
-paramlist(struct scope *s, struct generic *g, const char *clause)
+paramlist(struct scope *s, struct generic *g, const char *clause, int nconst)
 {
 	struct array params = {0};
 	struct genparam *p;
 	struct decl *d;
 	size_t i, j;
-	int nconst;
 
+	/* the first `nconst` constness parameters belong to an earlier clause of the declaration */
 	expect(TLESS, clause);
-	nconst = 0;
 	do {
 		p = arrayadd(&params, sizeof(*p));
 		p->bit = QUALNONE;
@@ -1498,6 +1497,7 @@ genparams(struct scope *s, struct generic **exists)
 {
 	struct generic *g, *ex;
 	size_t i;
+	int nconst;
 	bool ismono;
 
 	ismono = consume(T_MONO);
@@ -1506,7 +1506,7 @@ genparams(struct scope *s, struct generic **exists)
 	g = NULL;
 	if (consume(T_FORALL)) {
 		g = mkgeneric(ismono);
-		paramlist(s, g, "after 'forall'");
+		paramlist(s, g, "after 'forall'", 0);
 	}
 	ex = NULL;
 	if (consume(T_EXISTS)) {
@@ -1514,10 +1514,13 @@ genparams(struct scope *s, struct generic **exists)
 		if (ismono && !g)
 			error(&tok.loc, "mono exists is not supported");
 		ex = mkgeneric(false);
-		paramlist(s, ex, "after 'exists'");
+		nconst = 0;
+		for (i = 0; g && i < g->nparam; ++i)
+			nconst += g->params[i].kind == GENCONSTNESS;
+		paramlist(s, ex, "after 'exists'", nconst);
 		for (i = 0; i < ex->nparam; ++i) {
-			if (ex->params[i].kind != GENTYPE)
-				error(&tok.loc, "exists parameters must be type parameters");
+			if (ex->params[i].kind == GENSIZE)
+				error(&tok.loc, "exists parameters must be type or constness parameters");
 			if (ex->params[i].variance)
 				error(&tok.loc, "exists parameter '%s' cannot be marked '%c'", ex->params[i].name, ex->params[i].variance > 0 ? '+' : '-');
 		}
@@ -1896,6 +1899,7 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 					scopeputdecl(s, d->u.func.namedecl);
 					bodyctx.type = qt.type;
 					bodyctx.mono = true;
+					exopenreset();
 					d->u.func.body = funcbody(&bodyctx, s);
 					d->u.func.deftype = qt.type;
 					d->u.func.defgen = gen;
@@ -1907,6 +1911,7 @@ decl(struct scope *s, struct funcctx *fc, struct stmt ***end)
 				/* the body uses the declarator's own forall parameters */
 				f = mkfunc(d, name, qt.type, s);
 				bodyctx.type = qt.type;
+				exopenreset();
 				body = funcbody(&bodyctx, s);
 				lower(f, body);
 				delstmt(body);

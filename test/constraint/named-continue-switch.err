@@ -1,0 +1,1 @@
+error: 'continue a' must name a loop, but 'a' labels a switch statement

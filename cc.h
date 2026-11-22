@@ -33,6 +33,8 @@ struct token {
 	loc is where the outermost macro was invoked.
 	*/
 	bool c5;
+	/* whether the token was written in a system header, which warnings are not reported for */
+	bool sys;
 	struct location loc;
 	char *lit;
 };
@@ -52,7 +54,13 @@ enum typequal {
 	QUALCPARAM0  = 1<<5,
 	QUALCPARAM1  = 1<<6,
 	QUALCPARAM2  = 1<<7,
-	QUALCPARAMS  = QUALCPARAM0|QUALCPARAM1|QUALCPARAM2,
+	/*
+	constness of the existential parameters of a value that has been
+	destructured, which is not known; each such value has its own
+	*/
+	QUALXPARAM0  = 1<<8,
+	QUALXPARAMS  = 0xffff<<8,
+	QUALCPARAMS  = QUALCPARAM0|QUALCPARAM1|QUALCPARAM2|QUALXPARAMS,
 	/* qualifiers that prevent modification */
 	QUALCONSTANT = QUALCONST|QUALCPARAMS,
 };
@@ -439,6 +447,20 @@ well. The caller must recover with something later checks can use;
 no code is generated once an error has been reported.
 */
 void softerror(const struct location *, const char *, ...);
+/*
+Warnings, which are each controlled by name with -W<name> and
+-Wno-<name>, and can be made errors with -Werror or -Werror=<name>.
+*/
+enum warnkind {
+	/* octal constant without the 0o prefix (obsolescent in C2y) */
+	WARNOCTAL,
+
+	NWARN,
+};
+
+void warning(enum warnkind, const struct location *, const char *, ...);
+void warnoption(const char *);
+void warnnone(void);
 extern unsigned nerrors;
 /* called after an error is reported, to add notes */
 extern void (*errornotes)(void);
@@ -448,6 +470,7 @@ extern void (*errornotes)(void);
 void scanfrom(const char *, FILE *);
 void scanopen(void);
 void scansetloc(struct location loc);
+void scansetsys(bool);
 void scan(struct token *);
 bool scanstring(const char *, struct token *);
 
@@ -559,6 +582,8 @@ bool genunify(struct generic *, struct genarg *, struct type *, enum typequal, s
 void genscanconst(struct generic *, struct genarg *, struct type *, struct type *, int);
 struct type *genpartial(struct generic *, struct genarg *, struct type *, enum typequal *);
 bool genconstarg(struct scope *, enum typequal *);
+enum typequal genconstbits(struct generic *);
+bool typehasconstparam(struct type *, struct generic *, size_t);
 void genvariancecheck(struct generic *);
 bool typeconstvariant(struct type *, struct type *);
 bool typeconstconv(struct type *, struct type *);
@@ -685,6 +710,7 @@ struct expr *exprcompare(enum tokenkind, struct expr *, struct expr *);
 struct expr *exprtemp(struct type *);
 struct expr *exprunarray(struct expr *);
 struct genarg *exopen(struct generic *);
+void exopenreset(void);
 
 /* eval */
 
@@ -716,6 +742,8 @@ struct funcctx {
 	/* labels defined in the function, and goto statements to resolve */
 	struct map labels;
 	struct stmt *gotos;
+	/* labels directly before the statement about to be parsed, which name it if it is a loop or switch */
+	struct stmt *names;
 };
 
 enum stmtkind {
@@ -757,6 +785,12 @@ struct stmt {
 	struct stmt *defer;
 	/* targets of break and continue (iteration and switch statements); set during lowering */
 	struct block *breaklabel, *continuelabel;
+	/*
+	for iteration and switch statements, the labels that name the
+	statement for break and continue (linked through
+	u.label.nextname), and the innermost enclosing such statement
+	*/
+	struct stmt *names, *outer;
 	union {
 		struct {
 			struct stmt *body;
@@ -820,6 +854,8 @@ struct stmt {
 			/* block for the label in the current lowering of its enclosing code */
 			struct block *block;
 			unsigned epoch;
+			/* next label of the same statement */
+			struct stmt *nextname;
 		} label;
 		/* goto, break, and continue */
 		struct {
